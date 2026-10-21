@@ -220,6 +220,88 @@
     return h('div', {}, btn, box);
   }
 
+  // ---------- หลายช็อตในรูปเดียว (โหมดภาพนิ่ง): prompt ตาราง 4/12 ช่อง → แนบรูปตาราง → ตัดแบ่งเข้าช็อต ----------
+  const sheetUi = { open: false, per: 4 }; // จำไว้ข้ามการวาดหน้าใหม่
+  function sheetBox() {
+    const p = cur.project;
+    const box = h('section', { class: 'st-merged', hidden: true });
+    const btn = h('button', { class: 'btn', type: 'button', textContent: '🧩 หลายช็อตในรูปเดียว' });
+    const per = h('select', { 'aria-label': 'จำนวนช็อตต่อรูป' }, new Option('4 ช็อต/รูป (ตาราง 2×2 — คมกว่า)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
+    per.value = String(sheetUi.per);
+    const list = h('div', { class: 'st-merged-list' });
+    const load = () => guard(btn, async () => {
+      sheetUi.per = Number(per.value);
+      const gs = await api('GET', `/api/story/projects/${p.id}/sheet?per=${sheetUi.per}`);
+      list.replaceChildren(...(gs.length ? gs.map(sheetGroup) : [h('p', { class: 'muted', textContent: 'ยังไม่มีช็อต' })]));
+      box.hidden = false; sheetUi.open = true;
+    }, (e) => toast(e.message, true));
+    btn.addEventListener('click', () => (box.hidden ? load() : (box.hidden = true, sheetUi.open = false)));
+    per.addEventListener('change', load);
+    box.append(h('p', { class: 'hint', textContent: `ให้ ${genOf(p).short} วาดหลายช็อตเป็นตารางในรูปเดียว — ตัวละครหน้าตาเหมือนกันทุกช่องและส่งน้อยครั้งกว่า แต่แต่ละช็อตได้ภาพเล็กลง (4 ช่อง ≈ ครึ่งหนึ่งของรูปเต็ม, 12 ช่อง ≈ หนึ่งในสี่ อาจแตกตอนเต็มจอ) คัดลอก prompt ไปวาง แล้วแนบรูปตารางที่ได้ ระบบจะตัดเป็นช่องและแนบเข้าช็อตให้` }),
+      h('div', { class: 'row' }, h('span', { class: 'cap-label', textContent: 'จำนวนช็อตต่อรูป' }), per), list);
+    if (sheetUi.open) load();
+    return h('div', {}, btn, box);
+  }
+  function sheetGroup(g) {
+    const first = g.shots[0].position, last = g.shots[g.shots.length - 1].position;
+    const span = g.shots.length > 1 ? `ช็อต ${first}–${last}` : `ช็อต ${first}`;
+    const ta = h('textarea', { rows: 7, value: g.prompt, readOnly: true, spellcheck: false });
+    const cp = h('button', { class: 'btn sm primary', type: 'button', textContent: '📋 คัดลอก' });
+    cp.addEventListener('click', async () => { if (!(await copyText(g.prompt))) return toast('คัดลอกไม่ได้ — เลือกข้อความแล้วกด Ctrl+C', true); cp.textContent = 'คัดลอกแล้ว ✓'; setTimeout(() => { cp.textContent = '📋 คัดลอก'; }, 1500); });
+    const input = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp', hidden: true });
+    const pick = h('button', { class: 'btn sm', type: 'button', textContent: `📎 แนบรูปตาราง → ตัดเข้า${span}` });
+    const stage = h('div', { class: 'st-sheet', hidden: true });
+    pick.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      const f = input.files[0]; input.value = '';
+      if (f) guard(pick, () => sliceSheet(f, g, stage), (e) => toast(e.message, true));
+    });
+    return h('div', { class: 'st-card' },
+      h('div', { class: 'st-prompt-head' }, h('b', { textContent: `${span} · ตาราง ${g.cols}×${g.rows}` }), cp), ta,
+      h('div', { class: 'row' }, pick, input), stage);
+  }
+  // ตัดรูปตารางเป็นช่องเท่าๆ กัน (เผื่อขอบ ~2% ต่อด้านกันเส้นคั่นสีขาวติดมา) → โชว์ตัวอย่างว่าช่องไหนเข้าช็อตไหน → กดยืนยันแล้วค่อยอัปโหลด
+  async function sliceSheet(file, g, stage) {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('รองรับเฉพาะรูป .png .jpg .webp');
+    const bmp = await createImageBitmap(file);
+    const cw = bmp.width / g.cols, ch = bmp.height / g.rows;
+    const ix = Math.round(cw * 0.02), iy = Math.round(ch * 0.02);
+    const pieces = [];
+    for (let i = 0; i < g.shots.length; i++) {
+      const x = (i % g.cols) * cw, y = Math.floor(i / g.cols) * ch;
+      const w = Math.floor(cw - ix * 2), hh = Math.floor(ch - iy * 2);
+      const c = h('canvas', { width: w, height: hh });
+      c.getContext('2d').drawImage(bmp, Math.round(x + ix), Math.round(y + iy), w, hh, 0, 0, w, hh);
+      pieces.push({ shot: g.shots[i], blob: await new Promise((r) => c.toBlob(r, 'image/png')), url: c.toDataURL('image/jpeg', 0.7), w, h: hh });
+    }
+    bmp.close();
+    const replace = pieces.filter((x) => x.shot.has).length;
+    const ok = h('button', { class: 'btn sm primary', type: 'button', textContent: `✓ แนบ ${pieces.length} ช็อต${replace ? ` (แทนรูปเดิม ${replace})` : ''}` });
+    const cancel = h('button', { class: 'btn sm ghost', type: 'button', textContent: 'ยกเลิก' });
+    cancel.addEventListener('click', () => { stage.hidden = true; stage.replaceChildren(); });
+    ok.addEventListener('click', () => guard(ok, async () => {
+      for (const [n, x] of pieces.entries()) {
+        ok.textContent = `⏳ กำลังแนบ ${n + 1}/${pieces.length}`;
+        const r = await fetch(`/api/story/shots/${x.shot.id}/video`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: x.blob });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(`ช็อต ${x.shot.position}: ${data.error || `อัปโหลดไม่สำเร็จ (${r.status})`}`);
+        cur = data; x.shot.has = true;
+        refreshCard(x.shot.id);
+      }
+      refreshSums();
+      stage.hidden = true; stage.replaceChildren();
+      toast(`แนบรูปเข้าช็อต ${pieces[0].shot.position}–${pieces[pieces.length - 1].shot.position} แล้ว ✓`);
+    }, (e) => toast(e.message, true)));
+    const small = pieces[0].w < 400 ? ' — ช่องเล็ก อาจไม่คมตอนเต็มจอ' : '';
+    stage.replaceChildren(
+      h('p', { class: 'hint', textContent: `ตัดได้ ${pieces.length} ช่อง ช่องละ ${pieces[0].w}×${pieces[0].h} พิกเซล${small} — ตรวจว่าช่องตรงช็อตก่อนกดแนบ` }),
+      h('div', { class: 'st-sheet-grid' }, ...pieces.map((x) => h('figure', {},
+        h('img', { src: x.url, alt: `ช็อต ${x.shot.position}` }),
+        h('figcaption', { textContent: `ช็อต ${x.shot.position}${x.shot.has ? ' · แทนรูปเดิม' : ''}` })))),
+      h('div', { class: 'row' }, ok, cancel));
+    stage.hidden = false;
+  }
+
   // ---------- โทนภาพของเรื่อง (ใส่ซ้ำทุก prompt) ----------
   function lookBox(styleField) {
     const p = cur.project;
@@ -421,7 +503,7 @@
     const wrap = h('div', { class: 'st-pane' },
       h('div', { class: 'row' }, ai, rebuild, copyAll, manyBtn, many, add),
       genPicker(),
-      mergedBox(),
+      p.media === 'image' ? sheetBox() : mergedBox(),
       stage,
       h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · สร้างแล้ว ${done}/${cur.shots.length} — วาง prompt ทีละช็อตใน ${genOf(p).short} แล้วแนบ${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ได้เข้าช็อต` : 'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
     wrap.append(assemblePanel());

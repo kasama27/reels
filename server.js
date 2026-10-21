@@ -555,6 +555,12 @@ const routes = [
     if (!Number.isInteger(sec) || sec < 5 || sec > 30) throw new HttpError(400, 'sec ต้องเป็นจำนวนเต็ม 5–30');
     return story.buildMerged(+m[1], sec);
   }],
+  ['GET', /^\/api\/story\/projects\/(\d+)\/sheet$/, async (req, m, url) => {
+    mustProject(+m[1]);
+    const per = Number(url.searchParams.get('per') || 4);
+    if (![4, 12].includes(per)) throw new HttpError(400, 'per ต้องเป็น 4 หรือ 12');
+    return story.buildSheet(+m[1], per);
+  }],
   // คลังตัวละคร/สถานที่/ของประกอบ
   ['POST', /^\/api\/story\/projects\/(\d+)\/entities$/, async (req, m) => {
     mustProject(+m[1]);

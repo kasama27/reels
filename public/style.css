@@ -399,6 +399,11 @@ dialog#story { width: min(1080px, calc(100vw - 24px)); }
 @media (max-width: 640px) { .st-grid2 { grid-template-columns: minmax(0, 1fr); } }
 .st-merged, .st-merged-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
 .st-merged { margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.st-sheet { display: grid; gap: 8px; margin-top: 8px; }
+.st-sheet-grid { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+.st-sheet-grid figure { margin: 0; }
+.st-sheet-grid img { width: 100%; display: block; border-radius: 6px; border: 1px solid var(--line); }
+.st-sheet-grid figcaption { font-size: 12px; text-align: center; margin-top: 2px; }
 .st-map { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--accent); border-radius: 10px; }
 .st-map h3 { margin: 0; font-size: 15px; }
 .st-map-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto minmax(0, 1.4fr); align-items: center; gap: 10px; }
