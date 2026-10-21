@@ -226,14 +226,7 @@ window.ReelRender = (() => {
       ctx.fillStyle = '#fff'; ctx.fillText(`ภาพ: ${photo.credit}`, W - 44, creditY);
       ctx.restore();
     }
-    if (logo) { // ลายน้ำโลโก้เล็ก ๆ มุมซ้ายบน โปร่งแสง ทุกฉาก (ไม่เด่นกว่าเนื้อหา)
-      const lw = 130, lh = lw * logo.height / logo.width;
-      ctx.save();
-      ctx.globalAlpha = 0.68 * ease(t / 0.8);
-      ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
-      ctx.drawImage(logo, 40, 150, lw, lh);
-      ctx.restore();
-    }
+    drawLogo(ctx, logo, t);
 
     // แฟลชขาวคั่นฉาก: สว่างขึ้นก่อนตัดฉาก แล้วจางหลังเข้าฉากใหม่
     let f = 0;
@@ -356,6 +349,120 @@ window.ReelRender = (() => {
     return ac.decodeAudioData(await res.arrayBuffer());
   }
 
+  // ---------- แกนร่วม: ใช้ทั้ง render() (คลิปเร็ว) และ assemble() (รวมช็อตของเรื่อง) ----------
+  // โหลดรูป — โหลดไม่ได้/ขนาดศูนย์ได้ null (ผู้เรียกข้ามไปเอง ไม่ล้มทั้งงาน)
+  const loadImage = (url) => new Promise((resolve) => {
+    if (!url) return resolve(null);
+    const im = new Image();
+    im.onload = () => resolve(im.width > 0 ? im : null);
+    im.onerror = () => resolve(null);
+    im.src = url;
+  });
+
+  // เสียงพากย์ต่อบรรทัด (ขอ WAV จากเซิร์ฟเวอร์ครั้งเดียวทั้งชุด) → AudioBuffer ตรงตำแหน่ง, บรรทัดว่างได้ null
+  async function ttsBuffers(ac, lines, onStatus, label) {
+    const out = lines.map(() => null);
+    const idx = lines.map((s, i) => (s && s.trim() ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return out;
+    onStatus?.(label);
+    const r = await fetch('/api/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines: idx.map((i) => lines[i]) }) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `สร้างเสียงพากย์ไม่สำเร็จ (${r.status})`);
+    const bufs = await Promise.all(data.files.map((u) => decode(ac, u)));
+    idx.forEach((i, k) => { out[i] = bufs[k]; });
+    return out;
+  }
+
+  // เพลงจากไฟล์ของผู้ใช้ ('file:ชื่อ') ต้องโหลดก่อน; เพลงสังเคราะห์ไม่ต้อง (ได้ null)
+  async function loadMusic(ac, music, onStatus) {
+    if (!music || !music.startsWith('file:')) return null;
+    onStatus?.('กำลังโหลดเพลง…');
+    return decode(ac, `/music/${encodeURIComponent(music.slice(5))}`);
+  }
+  // เพลงพื้นหลัง: ค่อยดังขึ้น 1 วิแรก คงระดับ แล้วค่อยเบาลงช่วง 1.5 วิท้าย
+  function scheduleMusic(ac, dest, { music, buf, total, ta, level }) {
+    if (!music || music === 'none') return;
+    const mg = ac.createGain();
+    mg.gain.setValueAtTime(0, ta);
+    mg.gain.linearRampToValueAtTime(level, ta + 1);
+    mg.gain.setValueAtTime(level, ta + Math.max(1, total - 1.5));
+    mg.gain.linearRampToValueAtTime(0, ta + total);
+    mg.connect(dest);
+    if (buf) {
+      const src = ac.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      src.connect(mg); src.start(ta); src.stop(ta + total + 0.1);
+    } else {
+      makeMusic(ac, mg, music, total, ta);
+    }
+  }
+  // เสียงพากย์แต่ละฉากเริ่มหลังต้นฉาก VOICE_LEAD วิ (starts[i] = เวลาเริ่มฉาก i)
+  function scheduleVoices(ac, dest, voices, starts, ta) {
+    voices.forEach((b, i) => {
+      if (!b) return;
+      const src = ac.createBufferSource();
+      src.buffer = b; src.connect(dest); src.start(ta + starts[i] + VOICE_LEAD);
+    });
+  }
+
+  // ลายน้ำโลโก้เล็ก ๆ มุมซ้ายบน โปร่งแสง ทุกฉาก (ไม่เด่นกว่าเนื้อหา)
+  function drawLogo(ctx, logo, t) {
+    if (!logo) return;
+    const lw = 130, lh = lw * logo.height / logo.width;
+    ctx.save();
+    ctx.globalAlpha = 0.68 * ease(t / 0.8);
+    ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
+    ctx.drawImage(logo, 40, 150, lw, lh);
+    ctx.restore();
+  }
+
+  // ตัวอัด: แทร็กเสียงเงียบ (Reels ต้องมีเสียง) + captureStream + MediaRecorder + ลูปวาดตามเวลาจริง → { blob, mime }
+  // เรียกหลังตั้งเวลาเสียงทั้งหมดไว้ที่ ta = ac.currentTime + lead แล้ว; draw(t) วาดเฟรม ณ วินาทีที่ t; ปิด AudioContext ให้เมื่อจบ
+  async function record({ ac, dest, canvas, mime, total, lead, draw, onProgress, onStop }) {
+    const osc = ac.createOscillator(), silent = ac.createGain();
+    silent.gain.value = 0;
+    osc.connect(silent).connect(dest);
+    osc.start();
+    const stream = canvas.captureStream(FPS);
+    dest.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 128_000 });
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    const stopped = new Promise((resolve, reject) => { rec.onstop = resolve; rec.onerror = (e) => reject(e.error || new Error('อัดวิดีโอล้มเหลว')); });
+
+    draw(0);
+    rec.start(1000);
+    const t0 = performance.now() + lead * 1000;
+    await new Promise((resolve) => {
+      const timer = setInterval(() => {
+        const t = Math.max(0, (performance.now() - t0) / 1000);
+        if (t >= total) { clearInterval(timer); resolve(); return; }
+        draw(t);
+        onProgress?.(t / total);
+      }, 1000 / FPS);
+    });
+    draw(total - 0.001);
+    await new Promise((r) => setTimeout(r, 250));
+    onStop?.();
+    rec.stop();
+    await stopped;
+    osc.stop();
+    ac.close();
+    const type = mime.split(';')[0];
+    return { blob: new Blob(chunks, { type }), mime: type };
+  }
+
+  // ภาพหน้าปกเล็ก (กว้าง 270 JPEG) จากสิ่งที่วาดอยู่บน canvas ตอนนี้ — คลังใช้โชว์แทนการโหลดวิดีโอ
+  function thumbOf(canvas) {
+    const tc = document.createElement('canvas');
+    tc.width = 270; tc.height = Math.round(270 * canvas.height / canvas.width);
+    tc.getContext('2d').drawImage(canvas, 0, 0, tc.width, tc.height);
+    return new Promise((resolve) => tc.toBlob(resolve, 'image/jpeg', 0.8));
+  }
+
+  // ปิด AudioContext ถ้ายังเปิด (ใช้ตอนล้มกลางทาง ก่อนถึงตัวอัด)
+  const closeAc = (ac) => { if (ac.state !== 'closed') ac.close().catch(() => {}); };
+
   // opts: { canvas?, onProgress?(0..1), onStatus?(text), voice?, music?, target? (วินาที) } → { blob, mime, duration, thumb, note }
   async function render(clip, theme, opts = {}) {
     const mime = pickMime();
@@ -371,15 +478,8 @@ window.ReelRender = (() => {
     // เสียงพากย์: ขอ WAV ต่อฉากจากเซิร์ฟเวอร์ แล้วขยายความยาวฉากให้พอดีกับเสียง
     let voices = [];
     if (opts.voice) {
-      opts.onStatus?.('กำลังสร้างเสียงพากย์…');
-      const r = await fetch('/api/tts', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ lines: scenes.map((s) => s.say) }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || `สร้างเสียงพากย์ไม่สำเร็จ (${r.status})`);
-      voices = await Promise.all(data.files.map((u) => decode(ac, u)));
-      scenes.forEach((s, i) => { s.dur = Math.max(s.dur, voices[i].duration + VOICE_LEAD + VOICE_TAIL); });
+      try { voices = await ttsBuffers(ac, scenes.map((s) => s.say), opts.onStatus, 'กำลังสร้างเสียงพากย์…'); } catch (e) { closeAc(ac); throw e; }
+      voices.forEach((v, i) => { if (v) scenes[i].dur = Math.max(scenes[i].dur, v.duration + VOICE_LEAD + VOICE_TAIL); });
     }
     // ความยาวเป้าหมาย: ยืด/หดเวลาต่อฉากให้ใกล้เป้า (ฉากที่มีเสียงพากย์หดต่ำกว่าความยาวเสียงไม่ได้)
     let note = '';
@@ -394,10 +494,7 @@ window.ReelRender = (() => {
     if (total > 90) { ac.close(); throw new Error(`ยาว ${Math.round(total)} วิ เกิน 90 วิ — ลดจำนวนฉาก`); }
 
     let musicBuf = null;
-    if (opts.music && opts.music.startsWith('file:')) {
-      opts.onStatus?.('กำลังโหลดเพลง…');
-      musicBuf = await decode(ac, `/music/${encodeURIComponent(opts.music.slice(5))}`);
-    }
+    try { musicBuf = await loadMusic(ac, opts.music, opts.onStatus); } catch (e) { closeAc(ac); throw e; }
 
     const canvas = opts.canvas || document.createElement('canvas');
     canvas.width = W; canvas.height = H;
@@ -406,57 +503,18 @@ window.ReelRender = (() => {
     // รูปประกอบ (opts.images = [{url, credit}]) — โหลดไม่ได้ก็ข้ามรูปนั้น
     const photos = [];
     for (const it of opts.images || []) {
-      const im = await new Promise((resolve) => { const x = new Image(); x.onload = () => resolve(x); x.onerror = () => resolve(null); x.src = it.url; });
-      if (im && im.width > 0) photos.push({ img: im, credit: it.credit || '' });
+      const im = await loadImage(it.url);
+      if (im) photos.push({ img: im, credit: it.credit || '' });
     }
-    let logoImg = null; // โลโก้เพจ (ถ้าตั้งไว้) — โหลดไม่ได้ก็เรนเดอร์ต่อโดยไม่มีโลโก้
-    if (opts.logo) {
-      logoImg = await new Promise((resolve) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => resolve(null); im.src = opts.logo; });
-    }
-
-    // แทร็กเสียงต้องมีเสมอ (Reels ต้องมีเสียง) — ถ้าไม่ใส่อะไรเลยจะเป็นเสียงเงียบ (oscillator ผ่าน gain 0)
-    const osc = ac.createOscillator(), silent = ac.createGain();
-    silent.gain.value = 0;
-    osc.connect(silent).connect(dest);
-    osc.start();
-
-    const stream = canvas.captureStream(FPS);
-    dest.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 128_000 });
-    const chunks = [];
-    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    const stopped = new Promise((resolve, reject) => { rec.onstop = resolve; rec.onerror = (e) => reject(e.error || new Error('อัดวิดีโอล้มเหลว')); });
+    const logoImg = opts.logo ? await loadImage(opts.logo) : null; // โลโก้เพจ — โหลดไม่ได้ก็เรนเดอร์ต่อโดยไม่มีโลโก้
 
     // ตั้งเวลาเสียงทั้งหมดล่วงหน้า (เริ่มหลัง 0.2 วิ ให้ตัวอัดพร้อม) แล้วเลื่อนเส้นเวลาภาพให้ตรงกัน
     const ta = ac.currentTime + 0.2;
-    const musicOn = opts.music && opts.music !== 'none';
     const duck = voices.length ? 0.4 : 1; // มีเสียงพากย์ → ลดเพลงลง
-    if (musicOn) {
-      const mg = ac.createGain();
-      const level = (musicBuf ? 0.35 : 0.9) * duck;
-      mg.gain.setValueAtTime(0, ta);
-      mg.gain.linearRampToValueAtTime(level, ta + 1);
-      mg.gain.setValueAtTime(level, ta + Math.max(1, total - 1.5));
-      mg.gain.linearRampToValueAtTime(0, ta + total);
-      mg.connect(dest);
-      if (musicBuf) {
-        const src = ac.createBufferSource();
-        src.buffer = musicBuf; src.loop = true;
-        src.connect(mg); src.start(ta); src.stop(ta + total + 0.1);
-      } else {
-        makeMusic(ac, mg, opts.music, total, ta);
-      }
-    }
-    if (voices.length) {
-      let at = 0;
-      scenes.forEach((s, i) => {
-        const src = ac.createBufferSource();
-        src.buffer = voices[i];
-        src.connect(dest);
-        src.start(ta + at + VOICE_LEAD);
-        at += s.dur;
-      });
-    }
+    scheduleMusic(ac, dest, { music: opts.music, buf: musicBuf, total, ta, level: (musicBuf ? 0.35 : 0.9) * duck });
+    const starts = [];
+    scenes.reduce((at, s) => { starts.push(at); return at + s.dur; }, 0);
+    scheduleVoices(ac, dest, voices, starts, ta);
 
     // เอฟเฟกต์เสียงประกอบ: whoosh ตอนเข้าฉาก, pop ตอนป้ายเด้ง, ding ตอนปิดคลิป (ปิดได้ด้วย opts.sfx === false)
     if (opts.sfx !== false) {
@@ -473,32 +531,16 @@ window.ReelRender = (() => {
       });
     }
 
-    drawFrame(ctx, scenes, theme, 0, starSets, logoImg, photos, badge);
-    rec.start(1000);
-    const t0 = performance.now() + 200;
-    await new Promise((resolve) => {
-      const timer = setInterval(() => {
-        const t = Math.max(0, (performance.now() - t0) / 1000);
-        if (t >= total) { clearInterval(timer); resolve(); return; }
-        drawFrame(ctx, scenes, theme, t, starSets, logoImg, photos, badge);
-        opts.onProgress?.(t / total);
-      }, 1000 / FPS);
+    const out = await record({
+      ac, dest, canvas, mime, total, lead: 0.2, onProgress: opts.onProgress,
+      draw: (t) => drawFrame(ctx, scenes, theme, t, starSets, logoImg, photos, badge),
     });
-    drawFrame(ctx, scenes, theme, total - 0.001, starSets, logoImg, photos, badge);
-    await new Promise((r) => setTimeout(r, 250));
-    rec.stop();
-    await stopped;
-    osc.stop();
-    ac.close();
 
-    // ภาพหน้าปกเล็ก (270×480 JPEG) จากฉากแรกตอนข้อความขึ้นเต็มแล้ว — คลังใช้โชว์แทนการโหลดวิดีโอ
+    // ภาพหน้าปกจากฉากแรกตอนข้อความขึ้นเต็มแล้ว
     drawFrame(ctx, scenes, theme, Math.min(scenes[0].dur * 0.7, total - 0.05), starSets, logoImg, photos, badge);
-    const tc = document.createElement('canvas');
-    tc.width = 270; tc.height = 480;
-    tc.getContext('2d').drawImage(canvas, 0, 0, 270, 480);
-    const thumb = await new Promise((resolve) => tc.toBlob(resolve, 'image/jpeg', 0.8));
+    const thumb = await thumbOf(canvas);
 
-    return { blob: new Blob(chunks, { type: mime.split(';')[0] }), mime: mime.split(';')[0], duration: total, thumb, note };
+    return { ...out, duration: total, thumb, note };
   }
 
   // ---------- รวมคลิปต่อช็อต (โปรเจกต์เรื่อง) ----------
@@ -536,17 +578,9 @@ window.ReelRender = (() => {
     const dest = ac.createMediaStreamDestination();
 
     // เสียงบรรยาย: ขอ WAV ต่อช็อตที่มีข้อความ แล้วยืดช่วงของช็อตให้พอดีกับเสียง (ไม่ตัดเสียง)
-    const voices = shots.map(() => null);
+    let voices = shots.map(() => null);
     if (opts.voice) {
-      const idx = shots.map((s, i) => (s.narration && s.narration.trim() ? i : -1)).filter((i) => i >= 0);
-      if (idx.length) {
-        opts.onStatus?.('กำลังสร้างเสียงบรรยาย…');
-        const r = await fetch('/api/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines: idx.map((i) => shots[i].narration) }) });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) { ac.close(); throw new Error(data.error || `สร้างเสียงบรรยายไม่สำเร็จ (${r.status})`); }
-        const bufs = await Promise.all(data.files.map((u) => decode(ac, u)));
-        idx.forEach((i, k) => { voices[i] = bufs[k]; });
-      }
+      try { voices = await ttsBuffers(ac, shots.map((s) => s.narration || ''), opts.onStatus, 'กำลังสร้างเสียงบรรยาย…'); } catch (e) { closeAc(ac); throw e; }
     }
     // ภาพนิ่งที่มีเสียง: ยาวเท่าเสียง (ไม่ใช่ค่าสำรองของช็อต) ; คลิป: ยาวอย่างน้อยเท่าคลิป
     const segs = shots.map((s, i) => ({ dur: isStill[i] && voices[i] ? voices[i].duration + VOICE_LEAD + VOICE_TAIL : Math.max(vids[i].duration, voices[i] ? voices[i].duration + VOICE_LEAD + VOICE_TAIL : 0) }));
@@ -555,38 +589,22 @@ window.ReelRender = (() => {
     const total = acc;
     if (total > 900) { ac.close(); throw new Error(`ยาว ${Math.round(total)} วิ เกิน 15 นาที — ลดจำนวนช็อต`); }
 
+    // เพลงจากไฟล์ของผู้ใช้ใช้ได้ด้วย (เดิมรวมเรื่องเล่นได้แต่เพลงสังเคราะห์ เลือกไฟล์แล้วเงียบ)
+    let musicBuf = null;
+    try { musicBuf = await loadMusic(ac, opts.music, opts.onStatus); } catch (e) { closeAc(ac); throw e; }
+    const logoImg = opts.logo ? await loadImage(opts.logo) : null;
+
     const canvas = opts.canvas || document.createElement('canvas');
     canvas.width = CW; canvas.height = CH;
     const ctx = canvas.getContext('2d');
-    const osc = ac.createOscillator(), silent = ac.createGain();
-    silent.gain.value = 0; osc.connect(silent).connect(dest); osc.start();
-
-    const stream = canvas.captureStream(FPS);
-    dest.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 128_000 });
-    const chunks = [];
-    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    const stopped = new Promise((resolve, reject) => { rec.onstop = resolve; rec.onerror = (e) => reject(e.error || new Error('อัดวิดีโอล้มเหลว')); });
 
     const ta = ac.currentTime + 0.3;
-    if (opts.music && opts.music !== 'none') {
-      const mg = ac.createGain();
-      const level = (voices.some(Boolean) ? 0.4 : 0.9) * 0.6;
-      mg.gain.setValueAtTime(0, ta); mg.gain.linearRampToValueAtTime(level, ta + 1);
-      mg.gain.setValueAtTime(level, ta + Math.max(1, total - 1.5)); mg.gain.linearRampToValueAtTime(0, ta + total);
-      mg.connect(dest);
-      makeMusic(ac, mg, opts.music, total, ta);
-    }
-    voices.forEach((b, i) => {
-      if (!b) return;
-      const src = ac.createBufferSource();
-      src.buffer = b; src.connect(dest); src.start(ta + segs[i].start + VOICE_LEAD);
-    });
+    const voiced = voices.some(Boolean);
+    scheduleMusic(ac, dest, { music: opts.music, buf: musicBuf, total, ta, level: (voiced ? 0.4 : 0.9) * 0.6 * (musicBuf ? 0.39 : 1) });
+    scheduleVoices(ac, dest, voices, segs.map((g) => g.start), ta);
     if (opts.keepAudio) {
       vids.forEach((v) => { if (v.still) return; v.muted = false; ac.createMediaElementSource(v).connect(dest); });
     }
-    let logoImg = null;
-    if (opts.logo) logoImg = await new Promise((resolve) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => resolve(null); im.src = opts.logo; });
 
     const cover = (v, p = 0, idx = 0) => {
       const k = Math.max(CW / v.videoWidth, CH / v.videoHeight), w = v.videoWidth * k, h = v.videoHeight * k;
@@ -625,43 +643,23 @@ window.ReelRender = (() => {
         }
       }
       if (opts.badge) drawBadge(ctx, theme, opts.badge, t);
-      if (logoImg) {
-        const lw = 130, lh = lw * logoImg.height / logoImg.width;
-        ctx.save(); ctx.globalAlpha = 0.68 * ease(t / 0.8);
-        ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
-        ctx.drawImage(logoImg, 40, 150, lw, lh); ctx.restore();
-      }
+      drawLogo(ctx, logoImg, t);
     };
 
     opts.onStatus?.('กำลังรวมคลิป…');
-    draw(0);
-    rec.start(1000);
-    const t0 = performance.now() + 300;
-    await new Promise((resolve) => {
-      const timer = setInterval(() => {
-        const t = Math.max(0, (performance.now() - t0) / 1000);
-        if (t >= total) { clearInterval(timer); resolve(); return; }
-        draw(t);
-        opts.onProgress?.(t / total);
-      }, 1000 / FPS);
+    const out = await record({
+      ac, dest, canvas, mime, total, lead: 0.3, draw, onProgress: opts.onProgress,
+      onStop: () => vids.forEach((v) => v.pause()),
     });
-    draw(total - 0.001);
-    await new Promise((r) => setTimeout(r, 250));
-    vids.forEach((v) => v.pause());
-    rec.stop();
-    await stopped;
-    osc.stop();
-    ac.close();
 
-    // หน้าปก: เฟรมต้นของช็อตแรก
-    vids[0].muted = true;
-    await new Promise((resolve) => { vids[0].onseeked = resolve; vids[0].currentTime = Math.min(0.5, vids[0].duration / 2); setTimeout(resolve, 1500); });
+    // หน้าปก: เฟรมต้นของช็อตแรก (ภาพนิ่งไม่ต้องรอ seek)
+    if (!vids[0].still) {
+      vids[0].muted = true;
+      await new Promise((resolve) => { vids[0].onseeked = resolve; vids[0].currentTime = Math.min(0.5, vids[0].duration / 2); setTimeout(resolve, 1500); });
+    }
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH); cover(vids[0]);
-    const tc = document.createElement('canvas');
-    tc.width = 270; tc.height = Math.round(270 * CH / CW);
-    tc.getContext('2d').drawImage(canvas, 0, 0, tc.width, tc.height);
-    const thumb = await new Promise((resolve) => tc.toBlob(resolve, 'image/jpeg', 0.8));
-    return { blob: new Blob(chunks, { type: mime.split(';')[0] }), mime: mime.split(';')[0], duration: total, thumb };
+    const thumb = await thumbOf(canvas);
+    return { ...out, duration: total, thumb };
   }
 
   return { render, pickMime, assemble };
