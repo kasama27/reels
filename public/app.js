@@ -582,15 +582,19 @@ function buildCard(c) {
 
   refs.btnSave = action('💾 บันทึก', async () => { await save(); toast('บันทึกแล้ว'); });
   refs.btnCaption = action('✨ AI แคปชัน', async () => { await save(); await api('POST', `/api/clips/${c.id}/caption`); });
-  refs.btnRender = h('button', { class: 'btn sm', type: 'button', textContent: '🎞 เรนเดอร์ใหม่' });
-  refs.btnRender.addEventListener('click', () => guard(refs.btnRender, async () => {
+  const doRender = async () => {
     // มีวิดีโออยู่แล้ว → เรนเดอร์ใหม่จะทับไฟล์เดิม (และล้างสถานะ "โพสต์แล้ว") ถามก่อน
     const now = await api('GET', `/api/clips/${c.id}`);
     if (now.video_file && !(await uiConfirm(`เรนเดอร์ใหม่จะทับวิดีโอเดิมของ “${now.title}”${now.status === 'posted' ? ' และล้างสถานะ “โพสต์แล้ว”' : ''}?`, { title: 'เรนเดอร์ใหม่', ok: 'เรนเดอร์ทับ' }))) return;
     await save();
     await renderInBrowser(c.id); // ปุ่มแสดง ⏳ กำลังอัดคลิป · NN% ผ่านระบบ task เอง (กด ✕ หยุด ที่การ์ดได้)
     await refresh();
-  }));
+  };
+  refs.btnRender = h('button', { class: 'btn sm', type: 'button', textContent: '🎞 เรนเดอร์ใหม่' });
+  refs.btnRender.addEventListener('click', () => guard(refs.btnRender, doRender));
+  // คลิปร่างที่ยังไม่มีวิดีโอ (เช่น หยุดเรนเดอร์กลางคัน) — ปุ่มเรนเดอร์ต้องเห็นเลย ไม่ต้องกดแก้ไขก่อน
+  refs.btnRenderNow = h('button', { class: 'btn sm primary', type: 'button', textContent: '🎞 เรนเดอร์คลิป' });
+  refs.btnRenderNow.addEventListener('click', () => guard(refs.btnRenderNow, doRender));
   refs.btnDel = action('🗑 ลบ', async () => {
     if (!(await uiConfirm(`ลบคลิป “${refs.title.textContent}” ?\n(รวมไฟล์วิดีโอ ลบแล้วกู้คืนไม่ได้)`, { title: 'ลบคลิป', ok: 'ลบ', danger: true }))) return;
     await api('DELETE', `/api/clips/${c.id}`);
@@ -622,7 +626,7 @@ function buildCard(c) {
     h('div', { class: 'item-main' },
       h('div', { class: 'item-head' }, h('div', { class: 'item-titles' }, refs.title, refs.meta, refs.source), refs.badge),
       refs.snippet, refs.tagline,
-      h('div', { class: 'actions' }, refs.btnCopyAll, refs.btnCopyCap, refs.btnCopyTags, refs.download, refs.btnPrompts, refs.btnImg, refs.btnExpand, refs.btnProducts, refs.btnPosted, refs.btnEdit, refs.btnDel),
+      h('div', { class: 'actions' }, refs.btnRenderNow, refs.btnCopyAll, refs.btnCopyCap, refs.btnCopyTags, refs.download, refs.btnPrompts, refs.btnImg, refs.btnExpand, refs.btnProducts, refs.btnPosted, refs.btnEdit, refs.btnDel),
       refs.err, refs.editBody));
   return entry;
 }
@@ -696,6 +700,7 @@ function updateCard(entry, c) {
   refs.dur.textContent = c.duration ? `${Math.round(c.duration)}″` : '';
 
   refs.btnRender.disabled = busy;
+  refs.btnRenderNow.hidden = !!c.video_file || busy;
   refs.btnCaption.disabled = busy;
   refs.btnDel.disabled = busy;
   refs.btnPosted.disabled = !c.video_file || busy;
@@ -1567,7 +1572,7 @@ $('b-create').addEventListener('click', (ev) => guard(ev.target, async () => {
   try {
     await renderInBrowser(clip.id, (p) => say(`กำลังอัดคลิป ${Math.round(p * 100)}% — เปิดแท็บนี้ค้างไว้`));
   } catch (e) {
-    say(e.message === STOPPED ? 'หยุดเรนเดอร์แล้ว — คลิปเก็บเป็นร่างในคลัง กด “🎞 เรนเดอร์ใหม่” ได้ภายหลัง' : `เก็บเป็นร่างแล้ว แต่เรนเดอร์ไม่สำเร็จ: ${e.message}`);
+    say(e.message === STOPPED ? 'หยุดเรนเดอร์แล้ว — คลิปเก็บเป็นร่างในคลัง กด “🎞 เรนเดอร์คลิป” ที่การ์ดในคลังได้ภายหลัง' : `เก็บเป็นร่างแล้ว แต่เรนเดอร์ไม่สำเร็จ: ${e.message}`);
     await refresh();
     return;
   }
