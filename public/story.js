@@ -201,6 +201,7 @@
     let look = {};
     try { look = JSON.parse(p.look || '{}'); } catch { /* ข้อมูลเสีย */ }
     const preset = h('select', {}, new Option('— เลือกโทนสำเร็จรูป —', ''), ...(cur.looks || []).map((x) => new Option(x.label, x.id)));
+    preset.value = (cur.looks || []).find((x) => x.ref && x.ref === look.ref)?.id || ''; // โชว์โทนที่ใช้อยู่ (ถ้าตรงพรีเซ็ต)
     const f = (key, label, ph) => { const el = h('textarea', { rows: 4, value: look[key] || '', maxLength: 400, placeholder: ph, spellcheck: false }); el.dataset.k = key; return [el, field(label, el)]; };
     const [refEl, refF] = f('ref', 'แนวอ้างอิง', 'เช่น classic Hong Kong martial arts cinema');
     const [lightEl, lightF] = f('light', 'แสงและบรรยากาศ', 'เช่น golden sunlight cutting through dust, moody amber atmosphere');
