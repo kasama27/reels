@@ -475,6 +475,7 @@
     const action = h('textarea', { rows: 2, value: s.action, maxLength: 600, placeholder: 'Action — ภาพ/การกระทำ (อังกฤษ)', spellcheck: false });
     const still = cur.project.media === 'image';
     const camera = h('input', { value: s.camera, maxLength: 200, placeholder: still ? 'Framing — มุม/ระยะภาพ (อังกฤษ) เช่น close-up, low angle' : 'Camera (อังกฤษ)', spellcheck: false });
+    const visText = h('input', { value: s.visible_text || '', maxLength: 120, placeholder: 'ข้อความที่ต้องเห็นในภาพ เช่น 09:07 บนนาฬิกา (ว่าง = ไม่มีตัวหนังสือ)', spellcheck: false });
     const narr = h('textarea', { rows: 2, value: s.narration, maxLength: 300, placeholder: 'คำบรรยาย (ไทย)' });
     const dur = h('input', { type: 'number', min: 2, max: 20, step: 1, value: s.duration });
     const before = h('input', { value: s.state_before, maxLength: 300, placeholder: 'สถานะต้นช็อต (อังกฤษ)', spellcheck: false });
@@ -502,6 +503,7 @@
     action.addEventListener('change', () => upd({ action: action.value }));
     camera.addEventListener('change', () => upd({ camera: camera.value }));
     narr.addEventListener('change', () => upd({ narration: narr.value }));
+    visText.addEventListener('change', () => upd({ visible_text: visText.value }));
     dur.addEventListener('change', () => upd({ duration: Number(dur.value) }));
     before.addEventListener('change', () => upd({ state_before: before.value }));
     after.addEventListener('change', () => upd({ state_after: after.value }));
@@ -515,7 +517,7 @@
       h('div', { class: 'st-row' }, field('สถานที่', loc), field('ความยาว (วิ)', dur)),
       field('ตัวละครในช็อต', h('div', { class: 'st-chips' }, ...byKind('character').map((e) => chip(e, 'character_ids')), ...(byKind('character').length ? [] : [h('span', { class: 'muted', textContent: 'ยังไม่มีตัวละคร — เพิ่มที่แท็บคลัง' })]))),
       ...(byKind('prop').length ? [field('ของประกอบ', h('div', { class: 'st-chips' }, ...byKind('prop').map((e) => chip(e, 'prop_ids'))))] : []),
-      action, camera, narr,
+      action, camera, visText, narr,
       h('div', { class: 'st-row' }, field('สถานะต้นช็อต', before), field('สถานะท้ายช็อต', after)),
       h('div', { class: 'st-prompt-head' }, h('span', { class: 'cap-label', textContent: still ? `Prompt สร้างรูป (แก้ได้) — วางใน ${genOf(cur.project).name}` : 'Prompt สำหรับ Meta AI (แก้ได้)' }), copy),
       prompt,

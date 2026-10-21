@@ -606,7 +606,7 @@ const routes = [
       story.addShot(p.id, {
         scene: s.scene, beat: s.beat, location_id: id('location', s.location) ?? null,
         character_ids: s.characters.map((n) => id('character', n)).filter(Boolean), prop_ids: s.props.map((n) => id('prop', n)).filter(Boolean),
-        action: s.action, camera: s.camera, narration: s.narration, duration: p.shot_sec, state_before: prevState, state_after: s.state_after,
+        action: s.action, camera: s.camera, narration: s.narration, duration: p.shot_sec, state_before: prevState, state_after: s.state_after, visible_text: s.visible_text,
       });
       prevState = s.state_after;
     }
@@ -619,7 +619,7 @@ const routes = [
     const cur = story.getShot(+m[1]);
     if (!cur) throw new HttpError(404, 'ไม่พบช็อต');
     const b = await readBody(req), f = {};
-    for (const [k, max] of [['scene', 80], ['beat', 300], ['action', 600], ['camera', 200], ['narration', 300], ['state_before', 300], ['state_after', 300], ['prompt', 3000], ['note', 500]]) {
+    for (const [k, max] of [['scene', 80], ['beat', 300], ['action', 600], ['camera', 200], ['narration', 300], ['state_before', 300], ['state_after', 300], ['visible_text', 120], ['prompt', 3000], ['note', 500]]) {
       if (b[k] === undefined) continue;
       if (typeof b[k] !== 'string' || b[k].length > max) throw new HttpError(400, `${k} ยาวเกิน ${max}`);
       f[k] = b[k].trim();
@@ -645,7 +645,7 @@ const routes = [
     }
     story.updateShot(cur.id, f);
     // แก้ฟิลด์ที่เป็นส่วนประกอบของ prompt (และไม่ได้ส่ง prompt มาเอง) → ประกอบ prompt ใหม่ให้
-    if (f.prompt === undefined && ['location_id', 'character_ids', 'prop_ids', 'action', 'camera', 'duration', 'state_before'].some((k) => f[k] !== undefined)) story.rebuildPrompts(cur.project_id, cur.id);
+    if (f.prompt === undefined && ['location_id', 'character_ids', 'prop_ids', 'action', 'camera', 'duration', 'state_before', 'state_after', 'visible_text'].some((k) => f[k] !== undefined)) story.rebuildPrompts(cur.project_id, cur.id);
     return story.getProject(cur.project_id);
   }],
   ['DELETE', /^\/api\/story\/shots\/(\d+)$/, async (req, m) => { const s = story.getShot(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบช็อต'); rmStoryVideo(s.video_file); story.deleteShot(s.id); return story.getProject(s.project_id); }],
