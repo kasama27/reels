@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arn Reels Companion — ตั้งค่า</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 15px/1.6 "Leelawadee UI", Tahoma, sans-serif; background: #0f1220; color: #e8eaf6; margin: 0; padding: 32px 20px; }
+  main { max-width: 560px; margin: 0 auto; display: grid; gap: 14px; }
+  h1 { font-size: 20px; margin: 0; }
+  label { display: grid; gap: 4px; font-size: 13px; color: #aab; }
+  input { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid #343a5c; background: #171a2d; color: #fff; }
+  button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 0; background: #7c83ff; color: #101020; font-weight: 700; cursor: pointer; justify-self: start; }
+  .msg { min-height: 1.4em; font-size: 14px; }
+  .ok { color: #7be0a0; } .bad { color: #ff9b9b; }
+  ol { margin: 0; padding-left: 20px; color: #c8cbe6; font-size: 14px; }
+  code { background: #1d2140; padding: 1px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎞 Arn Reels Companion</h1>
+  <ol>
+    <li>เปิดแอป Arn Reels บนเครื่องนี้ → ตั้งค่า → <b>ส่วนเสริม Chrome</b> → คัดลอกรหัสจับคู่</li>
+    <li>วางรหัสด้านล่าง แล้วกด “บันทึกและทดสอบ”</li>
+    <li>เปิด <code>meta.ai</code> จะมีแผง “Arn Reels” มุมขวาล่าง</li>
+  </ol>
+  <label>ที่อยู่ Arn Reels <input id="url" placeholder="http://127.0.0.1:8791" autocomplete="off" spellcheck="false"></label>
+  <label>รหัสจับคู่ <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="วางรหัสที่คัดลอกจากหน้าตั้งค่า Arn Reels"></label>
+  <button id="save">บันทึกและทดสอบ</button>
+  <div id="msg" class="msg" role="status"></div>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

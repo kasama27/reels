@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arn Reels — สตูดิโอคลิป</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">🎬</span>
+    <div><b>Arn Reels</b><small>สร้างคลิป · เขียนแคปชัน · เก็บรอโพสต์</small></div>
+  </div>
+  <div class="topbar-right">
+    <div id="chips" class="chips" aria-label="สถานะระบบ"></div>
+    <button id="b-settings" class="btn ghost" type="button">⚙ ตั้งค่า</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ซ้าย: สตูดิโอ 4 ขั้นตอน -->
+  <section class="studio surface" id="studio" data-mode="make" aria-labelledby="studio-h">
+    <h2 id="studio-h">สร้างคลิปใหม่</h2>
+    <div id="mode" class="seg mode" role="group" aria-label="โหมดการสร้าง">
+      <button type="button" data-m="make" aria-pressed="true">✍ คลิปเร็ว</button>
+      <button type="button" data-m="news" aria-pressed="false">📰 ข่าว</button>
+      <button type="button" data-m="story" aria-pressed="false" title="เรื่องหลายช็อต: สร้างรูป/คลิปทีละช็อตแล้วรวม — มีคลังตัวละครคุมหน้าตาให้ต่อเนื่อง">🎞 เรื่องหลายช็อต</button>
+    </div>
+    <p class="make-only news-note" style="opacity:.8">คลิปเดียว: พิมพ์เนื้อหา → AI แบ่งข้อความบนจอ → เรนเดอร์ในเบราว์เซอร์รวดเดียว (พื้นหลัง: ธีม/รูปจากที่มา/รูปที่สร้างเอง)</p>
+    <p class="news-only news-note">เรียบเรียงข่าวด้วยถ้อยคำของเรา + ใส่ที่มา ·
+      ตรวจข้อเท็จจริงกับต้นฉบับก่อนโพสต์ · เนื้อหาที่เหมือนต้นฉบับมากเสี่ยงโดนลดการเผยแพร่/ละเมิดลิขสิทธิ์</p>
+
+    <div class="step">
+      <div class="step-head"><span class="num">1</span><h3>เนื้อหา</h3></div>
+      <div id="drop" data-status="drop-status" tabindex="0" role="button" aria-label="วางหรือเลือกรูปเพื่อให้ AI อ่านเนื้อหา">
+        <span class="drop-ico" aria-hidden="true">🖼</span>
+        <span><strong>วางรูป (Ctrl+V)</strong> หรือคลิกเลือกไฟล์</span>
+        <small>AI อ่านเนื้อหาจากรูป แล้วสร้างภาพใหม่ในคลิป — ใช้รูปเป็นแหล่งข้อมูลเท่านั้น</small>
+        <input id="f-image" type="file" accept="image/*" hidden>
+        <img id="drop-preview" alt="ตัวอย่างรูปที่วาง" hidden>
+        <strong id="drop-status" class="drop-status" role="status" aria-live="polite" hidden></strong>
+      </div>
+      <label class="field">ชื่อคลิป
+        <input id="f-title" maxlength="200" placeholder="เช่น 3 ราศีมีโอกาสได้เงินก้อนใหญ่">
+      </label>
+      <label class="field">ป้ายบนคลิป <span class="hint">ไม่บังคับ เช่น “ตอนที่ 20” หรือ “สปอย · ตอนที่ 20” — ขึ้นป้ายเล็กมุมขวาบนทุกฉาก</span>
+        <input id="f-badge" maxlength="40" placeholder="เช่น ตอนที่ 20" autocomplete="off">
+      </label>
+      <!-- โหมดข่าว: เลือกข่าวจากฟีด RSS ที่เพิ่มไว้ -->
+      <div id="rss" class="rss news-only">
+        <div class="field-label">ข่าวจากฟีด RSS</div>
+        <div class="rss-bar">
+          <select id="feed-sel" aria-label="เลือกฟีดข่าว"></select>
+          <button id="feed-refresh" class="btn sm" type="button" title="โหลดข่าวใหม่">↻</button>
+          <button id="feed-add-toggle" class="btn sm" type="button">＋ เพิ่มฟีด</button>
+          <button id="feed-del" class="btn sm danger" type="button" title="ลบฟีดที่เลือก">🗑</button>
+        </div>
+        <div id="feed-add" class="rss-add" hidden>
+          <input id="feed-url" type="url" placeholder="ลิงก์ฟีด RSS/Atom เช่น https://feeds.bbci.co.uk/thai/rss.xml" autocomplete="off" spellcheck="false">
+          <button id="feed-add-go" class="btn sm primary" type="button">เพิ่ม</button>
+        </div>
+        <ul id="feed-items" class="feed-items"></ul>
+        <p id="feed-empty" class="hint" hidden>ยังไม่มีฟีด — กด “＋ เพิ่มฟีด” แล้ววางลิงก์ RSS ของเว็บข่าวที่คุณติดตาม</p>
+      </div>
+      <!-- โหมดสร้างเอง: ให้ AI ค้นความรู้จากคีย์เวิร์ด (ค้นเว็บ + แหล่งอ้างอิง) -->
+      <div class="field make-only" id="kn">
+        <div class="field-label">🔎 ให้ AI ค้นความรู้จากคีย์เวิร์ด <span class="hint">ค้นเว็บแล้วสรุปพร้อมแหล่งอ้างอิง (ใช้ Claude Code)</span></div>
+        <div class="rss-bar">
+          <input id="f-kw" maxlength="120" placeholder="เช่น ประโยชน์ของการนอนหลับ, ทำไมคนเราถึงหาว" autocomplete="off">
+          <button id="b-research" class="btn sm primary" type="button">🔎 ค้นความรู้</button>
+        </div>
+        <p id="kn-note" class="hint" hidden></p>
+      </div>
+      <label class="field"><span class="make-only">เนื้อหา / prompt</span><span class="news-only">ข้อความข่าวต้นฉบับ</span>
+        <span class="hint make-only">เล่าเรื่องที่อยากพูด ให้ AI แบ่งเป็นข้อความบนจอให้</span>
+        <span class="hint news-only">วางข้อความข่าว หรือเลือกจากฟีดด้านบน หรือวางรูปแคปข่าวที่กล่องด้านบน</span>
+        <textarea id="f-brief" rows="4" placeholder="ประเด็นหลัก กลุ่มคนดู น้ำเสียง…"></textarea>
+      </label>
+      <label class="field news-only">แหล่งที่มา <span class="hint">ชื่อสำนักข่าว/เพจ หรือลิงก์ — AI ใส่ท้ายแคปชันให้</span>
+        <input id="f-source" maxlength="300" placeholder="เช่น BBC News ไทย https://…" autocomplete="off">
+      </label>
+      <!-- รูปจริงจากเว็บเป็นพื้นหลังคลิป: ดึงจากลิงก์ที่มาให้อัตโนมัติ หรือเลือกเองจากหน้าเว็บที่ระบุ -->
+      <label class="check im-auto"><input type="checkbox" id="im-auto"> 🖼 ดึงรูปจริงจากที่มาเป็นพื้นหลังคลิปอัตโนมัติ <small class="hint">(ข่าว/ค้นความรู้ · ใส่เครดิตเว็บที่มุมจอ · ดึงตอนกด “สร้างคลิป”)</small></label>
+      <details id="imgen" class="im">
+        <summary>🎨 สร้างรูปเอง แล้วอัปโหลด (กันลิขสิทธิ์) <span id="imgen-count"></span></summary>
+        <p class="hint">สร้างรูปพื้นหลังด้วย AI (ไม่ใช้ภาพต้นฉบับของใคร) แล้วอัปโหลดมาเป็นพื้นหลังฉาก — เรียงตามลำดับที่เพิ่ม วนซ้ำจนครบคลิป</p>
+        <div class="row">
+          <span class="cap-label">สร้างรูปที่</span>
+          <select id="imgen-gen" aria-label="เลือกเว็บสร้างรูป"></select>
+          <a id="imgen-open" class="btn sm" target="_blank" rel="noopener noreferrer"></a>
+          <button id="imgen-prompt" class="btn sm" type="button">💡 คิด prompt รูปจากเนื้อหา</button>
+        </div>
+        <p id="imgen-tip" class="hint"></p>
+        <textarea id="imgen-pt" rows="3" readonly hidden spellcheck="false"></textarea>
+        <div class="row">
+          <input id="imgen-file" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple hidden>
+          <button id="imgen-up" class="btn sm primary" type="button">📎 อัปโหลดรูปที่สร้างไว้ (หลายไฟล์ได้)</button>
+        </div>
+        <p id="imgen-msg" class="hint" role="status"></p>
+      </details>
+      <details id="im" class="im">
+        <summary>🖼 เลือกรูปจากหน้าเว็บเอง <span id="im-count"></span></summary>
+        <p class="warn-note">⚠ รูปส่วนใหญ่บนเว็บมีลิขสิทธิ์ — ใช้เฉพาะรูปที่คุณมีสิทธิ์ใช้ (ของคุณเอง ลิขสิทธิ์เปิด/สาธารณสมบัติ หรือได้รับอนุญาต) เว็บข่าวอาจขอให้ลบหรือจำกัดการเผยแพร่ถ้านำภาพไปใช้ในคลิป</p>
+        <div class="rss-bar">
+          <input id="im-url" type="url" placeholder="ลิงก์หน้าเว็บที่มีรูป เช่น ลิงก์ข่าว" autocomplete="off" spellcheck="false">
+          <button id="im-go" class="btn sm primary" type="button">ดึงรูป</button>
+        </div>
+        <div id="im-grid" class="im-grid"></div>
+        <p id="im-msg" class="hint" role="status"></p>
+        <div id="im-sel" class="im-sel"></div>
+      </details>
+      <button id="b-ai-script" class="btn ghost make-only" type="button">✨ ให้ AI เขียนข้อความบนจอจากเนื้อหา</button>
+      <button id="b-news" class="btn primary news-only" type="button">📰 เรียบเรียงข่าว (ถ้อยคำใหม่ + ที่มา)</button>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><span class="num">2</span><h3><span class="make-only">ข้อความบนจอ</span><span class="news-only">ข่าวที่เรียบเรียงแล้ว</span></h3></div>
+      <label class="field">ข้อความที่จะขึ้นบนวิดีโอ
+        <span class="hint make-only">ขึ้นทีละจอ บรรทัดละ 1 จอ · เขียน <code>หัวข้อ | รายละเอียด</code> เพื่อให้เป็นหัวข้อใหญ่ + ข้อความเล็กใต้หัวข้อ</span>
+        <span class="hint news-only">AI สรุปข่าวเป็นข้อความสั้น ๆ ขึ้นทีละจอ (บรรทัดละ 1 จอ) — แก้ไขได้ · <code>หัวข้อ | รายละเอียด</code> = หัวข้อใหญ่ + ข้อความเล็ก</span>
+        <textarea id="f-script" rows="6" placeholder="บรรทัดแรก = จอแรก (ประโยคเปิดให้คนหยุดดู)&#10;หัวข้อ | รายละเอียด&#10;…"></textarea>
+      </label>
+      <div class="news-only news-out">
+        <label class="field">แคปชัน <span class="hint">AI เขียนให้ มีบรรทัด “ที่มา:” — แก้ได้</span>
+          <textarea id="f-caption" rows="4" placeholder="แคปชัน"></textarea>
+        </label>
+        <label class="field">แฮชแท็ก
+          <textarea id="f-tags" rows="1" placeholder="#ข่าว #…"></textarea>
+        </label>
+        <div id="facts" class="facts" hidden>
+          <b>ข้อเท็จจริงที่ใช้ — ตรวจกับต้นฉบับก่อนโพสต์</b>
+          <ul id="facts-list"></ul>
+        </div>
+      </div>
+      <div class="field">ความยาวคลิป <span class="hint">AI เขียนจำนวนจอให้พอดี และตัวเรนเดอร์ยืด/หดเวลาของแต่ละจอให้ใกล้เป้า (5–90 วินาที)</span>
+        <div class="len-row">
+          <div id="len-presets" class="seg" role="group" aria-label="ความยาวคลิป">
+            <button type="button" data-s="0" aria-pressed="true">อัตโนมัติ</button>
+            <button type="button" data-s="15" aria-pressed="false">15 วิ</button>
+            <button type="button" data-s="30" aria-pressed="false">30 วิ</button>
+            <button type="button" data-s="45" aria-pressed="false">45 วิ</button>
+            <button type="button" data-s="60" aria-pressed="false">60 วิ</button>
+          </div>
+          <label class="len-custom"><input id="f-len" type="number" min="5" max="90" step="1" inputmode="numeric" placeholder="กำหนดเอง"> วิ</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><span class="num">3</span><h3>สไตล์ภาพ</h3></div>
+      <div id="themes" role="radiogroup" aria-label="สไตล์ภาพ"></div>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><span class="num">4</span><h3>เสียง</h3></div>
+      <label class="toggle">
+        <input type="checkbox" id="f-voice">
+        <span class="switch" aria-hidden="true"></span>
+        <span class="toggle-text">🎙 เสียงพากย์ไทย <small id="voice-note">อ่านข้อความทีละฉาก</small></span>
+      </label>
+      <label class="field">เพลงพื้นหลัง
+        <select id="f-music"></select>
+        <span class="hint">"สร้างสด" = เพลงต้นฉบับ ไม่มีลิขสิทธิ์ · ไฟล์ของคุณวางในโฟลเดอร์ <code>music/</code></span>
+      </label>
+    </div>
+
+    <div class="studio-foot">
+      <button id="b-create" class="btn primary lg" type="button">🎞 สร้างคลิป</button>
+      <button id="b-draft" class="btn lg ghost" type="button">💾 บันทึกร่างลงคลัง <small>(ไม่เรนเดอร์ — ไว้คัดลอกแคปชันก่อน)</small></button>
+      <button id="b-prompts" class="btn lg ghost" type="button">💡 คิด prompt ให้ Meta AI สร้างวิดีโอ <small>(ไม่เรนเดอร์)</small></button>
+      <p id="msg" class="msg" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <!-- ขวา: คลัง -->
+  <section class="library" aria-labelledby="lib-h">
+    <div class="lib-head">
+      <h2 id="lib-h">คลังคลิป <span id="count" class="count"></span></h2>
+      <div class="lib-tools">
+        <input id="q" type="search" placeholder="🔍 ค้นหาชื่อ / แคปชัน / แฮชแท็ก" aria-label="ค้นหาคลิป">
+        <select id="sort" aria-label="เรียงลำดับ">
+          <option value="new">ใหม่สุดก่อน</option>
+          <option value="old">เก่าสุดก่อน (คิวโพสต์)</option>
+          <option value="title">ชื่อ ก–ฮ</option>
+        </select>
+        <button id="b-clear-posted" class="btn danger" type="button" hidden title="ลบคลิปที่ทำเครื่องหมาย “โพสต์แล้ว” ทั้งหมดออกจากคลัง (รวมไฟล์วิดีโอ)">🗑 ล้างที่โพสต์แล้ว</button>
+      </div>
+    </div>
+    <div id="filter" class="seg" role="group" aria-label="กรองสถานะ">
+      <button type="button" data-v="" aria-pressed="true">ทั้งหมด <span class="n"></span></button>
+      <button type="button" data-v="ready" aria-pressed="false">พร้อมโพสต์ <span class="n"></span></button>
+      <button type="button" data-v="posted" aria-pressed="false">โพสต์แล้ว <span class="n"></span></button>
+      <button type="button" data-v="draft" aria-pressed="false">ร่าง <span class="n"></span></button>
+      <button type="button" data-v="failed" aria-pressed="false">ล้มเหลว <span class="n"></span></button>
+    </div>
+    <div id="kindfilter" class="seg" role="group" aria-label="กรองชนิดคลิป">
+      <button type="button" data-k="" aria-pressed="true">ทุกชนิด</button>
+      <button type="button" data-k="quick" aria-pressed="false">✍ คลิปเร็ว</button>
+      <button type="button" data-k="story" aria-pressed="false">🎞 เรื่อง</button>
+    </div>
+    <div id="grid"></div>
+    <div class="more-row"><button id="more" class="btn" type="button" hidden>โหลดเพิ่ม</button></div>
+    <div id="empty" class="empty" hidden>
+      <div class="empty-ico" aria-hidden="true">🎞</div>
+      <p><b id="empty-t">ยังไม่มีคลิปในคลัง</b></p>
+      <p class="muted" id="empty-s">เริ่มจากทางซ้าย: วางรูปหรือพิมพ์เนื้อหา แล้วกด “สร้างคลิป”</p>
+      <button id="clear-filter" class="btn sm" type="button" hidden>ล้างตัวกรอง</button>
+    </div>
+  </section>
+</main>
+
+<!-- ตั้งค่า -->
+<dialog id="settings" aria-labelledby="set-h">
+  <form method="dialog" id="set-form" class="set">
+    <div class="set-head">
+      <h2 id="set-h">ตั้งค่า</h2>
+      <button type="button" class="btn ghost icon" id="set-x" aria-label="ปิด">✕</button>
+    </div>
+
+    <section class="set-sec">
+      <h3>🤖 AI เขียนสคริปต์ / แคปชัน (Claude)</h3>
+      <div class="radio-cards" role="radiogroup" aria-label="วิธีเรียก Claude">
+        <label class="rc"><input type="radio" name="s-aip" value="cli">
+          <span><b>Claude Code ที่ล็อกอินไว้ (ไม่ต้องมีคีย์)</b><small>ใช้โควตาแผน Claude ของคุณเอง · ช้ากว่า API เล็กน้อย</small></span></label>
+        <label class="rc"><input type="radio" name="s-aip" value="api">
+          <span><b>Claude API key</b><small>เร็วกว่า · คิดเงินตามการใช้จริง ต้องขอคีย์ที่ console.anthropic.com</small></span></label>
+      </div>
+      <div id="s-cli" class="sub" hidden>
+        <p id="s-cli-status" class="cli-status" role="status"></p>
+        <div id="s-cli-login" hidden>
+          <button type="button" class="btn primary" id="s-cli-go">🔑 ล็อกอิน Claude Code</button>
+          <p class="hint" id="s-cli-wait" hidden>เปิดเบราว์เซอร์แล้ว — ล็อกอินด้วยบัญชี Claude ของคุณและกดอนุญาตจนเสร็จ แอปจะรู้เองเมื่อสำเร็จ
+            <span id="s-cli-fallback" hidden>· ถ้าเบราว์เซอร์ไม่เด้ง <a id="s-cli-url" href="#" target="_blank" rel="noopener noreferrer">กดที่นี่เพื่อเปิดหน้าล็อกอิน</a></span></p>
+          <details class="cmd-help"><summary>หรือรันคำสั่งเองในเทอร์มินัล</summary>
+            <div class="key-row"><code id="s-cli-cmd" class="cmd"></code><button type="button" class="btn ghost" id="s-cli-copy">คัดลอก</button></div>
+          </details>
+        </div>
+        <button type="button" class="btn" id="s-cli-check">ตรวจสถานะอีกครั้ง</button>
+      </div>
+      <div id="s-api" class="sub" hidden>
+        <label class="field">Claude API key
+          <div class="key-row">
+            <input id="s-akey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+            <button type="button" class="btn ghost" id="s-akey-clear">ลบคีย์</button>
+          </div>
+          <span class="hint" id="s-akey-hint"></span>
+        </label>
+        <label class="field">โมเดล
+          <input id="s-model" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="hint">คีย์เก็บในไฟล์ <code>config.json</code> บนเครื่องนี้เท่านั้น ไม่ส่งกลับมาแสดงหน้าเว็บ</p>
+      </div>
+    </section>
+
+    <section class="set-sec">
+      <h3>🎨 สไตล์ประจำเพจ (ให้ทุกโพสต์โทนเดียวกัน)</h3>
+      <p class="hint">เลือกโทนสำเร็จรูปแล้วแก้ได้ — AI จะใช้โทนภาพกับ prompt วิดีโอ/รูป, น้ำเสียงกับสคริปต์และแคปชัน, และแฮชแท็กประจำเพจกับทุกคลิป</p>
+      <div id="br-presets" class="radio-cards br-presets" role="radiogroup" aria-label="โทนสำเร็จรูป"></div>
+      <label class="field">โทนภาพ <span class="hint">ภาษาอังกฤษ — ต่อท้ายทุก prompt วิดีโอ/รูป</span>
+        <textarea id="br-visual" rows="2" maxlength="500" spellcheck="false" placeholder="เช่น cinematic illustration, deep navy and gold palette, soft glow"></textarea>
+      </label>
+      <label class="field">น้ำเสียงข้อความ <span class="hint">บอก AI ว่าให้เขียนสคริปต์/แคปชันด้วยน้ำเสียงแบบไหน</span>
+        <textarea id="br-voice" rows="3" maxlength="900" placeholder="เช่น กวน ๆ ปากเก่ง ประโยคสั้น มีมุกหักมุมท้าย ไม่หยาบคาย"></textarea>
+      </label>
+      <div class="field">โลโก้เพจ <span class="hint">ใส่มุมซ้ายบนตลอดคลิป และขนาดใหญ่ในฉากปิด · PNG/JPG/WebP</span>
+        <div class="logo-row">
+          <div class="logo-prev"><img id="br-logo-prev" alt="โลโก้เพจ" hidden><span id="br-logo-none" class="muted">ยังไม่มีโลโก้</span></div>
+          <div class="logo-ctl">
+            <input id="br-logo-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            <div class="row">
+              <button type="button" class="btn" id="br-logo-pick">📁 เลือกไฟล์โลโก้</button>
+              <button type="button" class="btn danger" id="br-logo-del" hidden>ลบโลโก้</button>
+            </div>
+            <label class="check"><input type="checkbox" id="br-logo-cut" checked> ตัดพื้นหลังสีทึบออกให้อัตโนมัติ (ตรวจสีจากมุมภาพ)</label>
+            <label class="check"><input type="checkbox" id="br-logo-on" checked> ใส่โลโก้ในคลิป</label>
+            <p id="br-logo-msg" class="hint" role="status"></p>
+          </div>
+        </div>
+      </div>
+      <label class="field">แฮชแท็กประจำเพจ <span class="hint">คั่นด้วยช่องว่าง — ใส่ทุกโพสต์</span>
+        <input id="br-tags" maxlength="200" placeholder="#ตลก #ขำขัน" autocomplete="off">
+      </label>
+    </section>
+
+    <section class="set-sec">
+      <h3>🔌 ส่วนเสริม Chrome (Arn Reels Companion)</h3>
+      <p class="hint">ช่วยวาง prompt ของช็อตลงใน meta.ai และส่งวิดีโอที่สร้างเสร็จกลับเข้าโปรเจกต์เรื่อง — คุณเป็นคนกดสร้างใน Meta AI เองทุกครั้ง</p>
+      <ol class="ext-steps">
+        <li>เปิด Chrome → ใส่ <code>chrome://extensions</code> → เปิด “โหมดนักพัฒนาซอฟต์แวร์” → กด “โหลดส่วนขยายที่คลายการแพ็กแล้ว” → เลือกโฟลเดอร์: <code id="s-ext-dir"></code> <button type="button" class="btn sm ghost" id="s-ext-dir-copy">คัดลอก</button></li>
+        <li>กดไอคอนส่วนเสริม แล้ววางรหัสจับคู่ด้านล่างในหน้าตั้งค่า</li>
+        <li>เปิด meta.ai → แผง “Arn Reels” มุมขวาล่าง</li>
+      </ol>
+      <label class="field">รหัสจับคู่ <span class="hint">เป็นความลับ — คนที่มีรหัสนี้ส่งไฟล์เข้าโปรเจกต์ของคุณได้ (ใช้ได้เฉพาะในเครื่องนี้)</span>
+        <div class="key-row">
+          <input id="s-ext-token" type="password" readonly autocomplete="off" spellcheck="false">
+          <button type="button" class="btn ghost" id="s-ext-show">แสดง</button>
+          <button type="button" class="btn" id="s-ext-copy">คัดลอก</button>
+          <button type="button" class="btn ghost" id="s-ext-rotate" title="สร้างรหัสใหม่ — รหัสเก่าใช้ไม่ได้อีก">สร้างใหม่</button>
+        </div>
+      </label>
+    </section>
+
+    <section class="set-sec">
+      <h3>🎙 เสียงพากย์</h3>
+      <div class="radio-cards" role="radiogroup" aria-label="แหล่งเสียงพากย์">
+        <label class="rc"><input type="radio" name="s-prov" value="windows">
+          <span><b>Windows ในเครื่อง</b><small>ฟรี ออฟไลน์ ไม่ต้องมีคีย์ · เสียง Microsoft Pattara · ฟังเป็นเสียงสังเคราะห์</small></span></label>
+        <label class="rc"><input type="radio" name="s-prov" value="google">
+          <span><b>Google Cloud TTS</b><small>เสียงธรรมชาติกว่า · ต้องมีคีย์ + บัญชีเรียกเก็บเงิน (มีโควตาฟรีรายเดือน)</small></span></label>
+        <label class="rc"><input type="radio" name="s-prov" value="gemini">
+          <span><b>Gemini TTS (คีย์ Gemini จาก AI Studio)</b><small>เสียงธรรมชาติ ใช้คีย์ Gemini API ที่ขอจาก aistudio.google.com ได้เลย — มีโควตาฟรีแต่จำกัดต่อนาที</small></span></label>
+      </div>
+      <div id="s-gemini" class="sub" hidden>
+        <label class="field">Gemini API key
+          <div class="key-row">
+            <input id="s-mkey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… หรือ AQ.…">
+            <button type="button" class="btn ghost" id="s-mkey-clear">ลบคีย์</button>
+          </div>
+          <span class="hint" id="s-mkey-hint"></span>
+        </label>
+        <label class="field">เสียง
+          <select id="s-mvoice"><option value="Kore">Kore (หญิง นิ่ง ชัด)</option><option value="Puck">Puck (ชาย สดใส)</option><option value="Zephyr">Zephyr (หญิง สดใส)</option><option value="Charon">Charon (ชาย ให้ข้อมูล)</option><option value="Aoede">Aoede (หญิง สบาย ๆ)</option><option value="Leda">Leda (หญิง อ่อนวัย)</option><option value="Orus">Orus (ชาย หนักแน่น)</option><option value="Fenrir">Fenrir (ชาย ตื่นเต้น)</option><option value="Sadaltager">Sadaltager (ชาย รอบรู้)</option></select>
+        </label>
+        <label class="field">โมเดล <span class="hint">ถ้า Google เปลี่ยนชื่อโมเดล แก้ตรงนี้ได้</span>
+          <input id="s-mmodel" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <div id="s-google" class="sub" hidden>
+        <label class="field">Google TTS API key
+          <div class="key-row">
+            <input id="s-gkey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+            <button type="button" class="btn ghost" id="s-gkey-clear">ลบคีย์</button>
+          </div>
+          <span class="hint" id="s-gkey-hint"></span>
+        </label>
+        <label class="field">ชื่อเสียง
+          <input id="s-gvoice" list="gvoices" autocomplete="off" spellcheck="false">
+          <datalist id="gvoices"><option value="th-TH-Neural2-C"><option value="th-TH-Standard-A"></datalist>
+          <span class="hint">ถ้าชื่อไม่รองรับ Google จะตอบ error ให้เห็นตอนกดทดสอบ</span>
+        </label>
+      </div>
+      <label class="field">ความเร็วเสียง <output id="s-rate-out"></output>
+        <input id="s-rate" type="range" min="0.6" max="1.5" step="0.05">
+      </label>
+      <div class="row">
+        <button type="button" class="btn" id="s-test" title="ปุ่มนี้จะบันทึกค่าที่กรอกอยู่ก่อน แล้วค่อยทดสอบ">▶ ทดสอบเสียง (บันทึกค่าก่อน)</button>
+        <audio id="s-audio" controls hidden></audio>
+      </div>
+    </section>
+
+    <div class="set-foot">
+      <p id="s-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="s-cancel">ปิด</button>
+      <button type="submit" class="btn primary" id="s-save">บันทึก</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- คลังสินค้าแอฟฟิลิเอต: เก็บลิงก์ที่ผู้ใช้มี (Shopee ฯลฯ) — ค้นหา/เพิ่ม/แก้/นำเข้าหลายรายการ -->
+<dialog id="products" aria-labelledby="pd-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="pd-h">🛍 คลังสินค้าแอฟฟิลิเอต</h2><div class="hint">เก็บลิงก์สินค้า (Shopee ฯลฯ) ที่คุณมีไว้ที่นี่ — AI เลือกให้ว่าคลิปไหนควรแปะสินค้าไหน</div></div>
+      <button type="button" class="btn ghost icon" id="pd-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="pr-body">
+      <form id="pd-form" class="pd-form">
+        <input id="pd-name" maxlength="150" placeholder="ชื่อสินค้า" autocomplete="off" required>
+        <input id="pd-url" type="url" maxlength="500" placeholder="ลิงก์แอฟฟิลิเอต (https://…)" autocomplete="off" required>
+        <input id="pd-tags" maxlength="200" placeholder="แท็ก/หมวด เช่น ความงาม, ครัว (ไม่บังคับ)" autocomplete="off">
+        <input id="pd-note" maxlength="300" placeholder="โน้ต เช่น จุดเด่น/ขนาด (ไม่บังคับ)" autocomplete="off">
+        <input id="pd-sales" type="number" min="0" step="1" inputmode="numeric" placeholder="ยอดขาย (ตัวเลข ไม่บังคับ)" title="ไว้จัดอันดับ “ขายดี” — ใส่จากแดชบอร์ด Shopee Affiliate ของคุณ">
+        <button type="submit" class="btn primary" id="pd-add">＋ เพิ่มสินค้า</button>
+      </form>
+      <!-- สินค้าที่เคยลงคลิปแล้วในแอป Pondy บนมือถือ (อ่านผ่าน adb ไม่แก้ไขอะไรบนมือถือ) -->
+      <details class="pd-import" id="pd-pondy">
+        <summary>📱 ดึงจากแอป Pondy บนมือถือ (สินค้าที่ลงคลิปแล้ว)</summary>
+        <p class="hint">ต่อมือถือเข้าคอม (เปิด USB debugging) แล้วกด “ตรวจมือถือ” — อ่านเฉพาะสินค้าที่โพสต์แล้วพร้อมลิงก์ (ส่วนใหญ่เป็นลิงก์สินค้า Shopee ธรรมดา ไม่ใช่ลิงก์แอฟฟิลิเอต — ดูคำเตือนในหน้าแนะนำสินค้า) ไม่แก้ไขข้อมูลบนมือถือ</p>
+        <div class="row"><button type="button" class="btn sm" id="pp-scan">🔌 ตรวจมือถือ</button></div>
+        <div id="pp-devs" class="pp-devs"></div>
+        <div id="pp-opts" class="pp-opts" hidden>
+          <label>ค้นชื่อ/คีย์เวิร์ด <input id="pp-q" placeholder="เว้นว่าง = ทั้งหมด" autocomplete="off"></label>
+          <label>โพสต์ภายใน
+            <select id="pp-days">
+              <option value="0.0417">1 ชั่วโมงล่าสุด</option>
+              <option value="0.25">6 ชั่วโมงล่าสุด</option>
+              <option value="1">1 วันล่าสุด</option>
+              <option value="7">7 วันล่าสุด</option>
+              <option value="30" selected>30 วันล่าสุด</option>
+              <option value="0">ทั้งหมด</option>
+            </select>
+          </label>
+          <label>แสดงให้เลือกทีละ (รายการ) <input id="pp-limit" type="number" min="1" max="200" step="1" value="10" inputmode="numeric"></label>
+          <div class="row"><button type="button" class="btn sm primary" id="pp-preview">ดูรายการให้เลือก</button><button type="button" class="btn sm danger" id="pp-clear" title="ลบสินค้าที่นำเข้าจากมือถือทั้งหมด (สินค้าที่เพิ่มเองไม่ถูกลบ)">🗑 ล้างที่นำเข้า</button></div>
+          <p id="pp-info" class="hint"></p>
+          <div id="pp-pick" class="pp-pick" hidden>
+            <div class="row"><button type="button" class="btn sm ghost" id="pp-all">เลือกทั้งหมด</button><button type="button" class="btn sm ghost" id="pp-none">ไม่เลือก</button><span id="pp-sel" class="hint"></span></div>
+            <ul id="pp-list" class="pp-list"></ul>
+            <div class="row"><button type="button" class="btn" id="pp-more">＋ แสดงเพิ่มอีก 10</button><button type="button" class="btn primary" id="pp-import">นำเข้าที่เลือก</button></div>
+          </div>
+        </div>
+      </details>
+      <details class="pd-import">
+        <summary>วางหลายรายการพร้อมกัน</summary>
+        <p class="hint">1 บรรทัด = 1 สินค้า รูปแบบ <code>ชื่อ | ลิงก์ | แท็ก | โน้ต | ยอดขาย</code> (แท็ก โน้ต ยอดขาย ไม่ต้องใส่ก็ได้ ลิงก์ซ้ำจะข้ามให้)</p>
+        <textarea id="pd-bulk" rows="5" placeholder="ครีมกันแดดสูตรเย็น | https://s.shopee.co.th/xxxx | ความงาม | SPF50 | 1250&#10;หม้อทอดไร้น้ำมัน | https://s.shopee.co.th/yyyy | ครัว | | 830"></textarea>
+        <button type="button" class="btn" id="pd-bulk-go">นำเข้า</button>
+      </details>
+      <div class="lib-tools">
+        <input id="pd-q" type="search" placeholder="🔍 ค้นหาสินค้า (ชื่อ/แท็ก/โน้ต)" aria-label="ค้นหาสินค้า">
+        <select id="pd-sort" aria-label="เรียงสินค้า"><option value="new">เพิ่มล่าสุดก่อน</option><option value="posted">โพสต์ล่าสุดก่อน</option><option value="sales">ขายดีก่อน</option></select>
+      </div>
+      <p id="pd-count" class="hint"></p>
+      <ul id="pd-list" class="pd-list"></ul>
+      <div class="more-row"><button id="pd-more" class="btn" type="button" hidden>โหลดเพิ่ม</button></div>
+      <p id="pd-empty" class="muted" hidden>ยังไม่มีสินค้า — เพิ่มด้านบน หรือวางหลายรายการพร้อมกัน</p>
+    </div>
+    <div class="set-foot">
+      <p id="pd-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="pd-close">ปิด</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- สินค้าที่ AI เลือกให้เข้ากับคลิป: ชื่อลิงก์ + URL + ประโยคชวน คัดลอกไปวางตอนเพิ่ม "สินค้าแอฟฟิลิเอต" บน Facebook -->
+<dialog id="recs" aria-labelledby="rc-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="rc-h">เลือกสินค้าไปใส่ Reels นี้</h2><div class="hint" id="rc-sub"></div></div>
+      <button type="button" class="btn ghost icon" id="rc-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="pr-body">
+      <p class="hint">บน Facebook: เพิ่มสินค้าแอฟฟิลิเอต → วาง <b>URL</b> และ <b>ชื่อลิงก์</b> ตามช่อง · Facebook แสดงป้ายรับค่าคอมมิชชั่นให้เอง ควรบอกผู้ชมชัดเจนว่าเป็นลิงก์แอฟฟิลิเอต</p>
+      <p class="warn-note">⚠ <b>ตรวจชนิดลิงก์ก่อนวาง</b> — ลิงก์ส่วนใหญ่ที่แอป Pondy เก็บไว้เป็น <b>ลิงก์สินค้า Shopee ธรรมดา</b> (ไม่มีตัวติดตามแอฟฟิลิเอต) ถ้าวางบน Facebook แล้วมีคนซื้อ <b>อาจไม่ได้ค่าคอมมิชชั่น</b> ต้องสร้างลิงก์แอฟฟิลิเอตจากบัญชี Shopee Affiliate ของคุณเองก่อน (ดูป้ายสีบนการ์ดแต่ละสินค้า)</p>
+      <!-- เลือกแหล่ง/เงื่อนไขก่อน แล้วค่อยกดค้นหา (ไม่เริ่มค้นเอง) — ลิงก์มาจากสินค้าที่แอป Pondy บนมือถือของคุณโพสต์ไว้ -->
+      <div class="rc-cond">
+        <div class="rc-cond-head"><b>1) ค้นจากมือถือเครื่องไหน</b><button type="button" class="btn sm ghost" id="rc-rescan">🔌 ตรวจมือถือใหม่</button></div>
+        <div id="rc-devs" class="pp-devs"></div>
+        <div class="rc-opts">
+          <label>2) เฉพาะสินค้าที่โพสต์ภายใน
+            <select id="rc-days">
+              <option value="0">ทั้งหมด</option>
+              <option value="1">1 วันล่าสุด</option>
+              <option value="7">7 วันล่าสุด</option>
+              <option value="30">30 วันล่าสุด</option>
+            </select>
+          </label>
+          <label>3) มีคำนี้ในชื่อ/คีย์เวิร์ด <span class="hint">(ไม่บังคับ)</span>
+            <input id="rc-q" placeholder="เช่น สมาร์ทวอทช์" autocomplete="off">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="rc-short"> เฉพาะ <b>ลิงก์สั้นของ Shopee</b> (s.shopee…) <small class="hint">— ลิงก์แบบนี้ปกติเป็นลิงก์แอฟฟิลิเอต ส่วนลิงก์สินค้าธรรมดาวางบน Facebook อาจไม่ได้ค่าคอม</small></label>
+      </div>
+      <div class="pr-bar">
+        <button id="rc-browse-btn" class="btn primary" type="button" disabled>📋 แสดงสินค้าที่ลงไว้ให้เลือกเอง</button>
+        <button id="rc-gen" class="btn" type="button" disabled>✨ ให้ AI เลือกให้ (เข้ากับคลิปนี้)</button>
+        <span id="rc-gen-hint" class="hint">เลือกมือถืออย่างน้อย 1 เครื่องก่อน</span>
+      </div>
+      <div id="rc-browse" class="rc-browse" hidden>
+        <p id="rc-browse-info" class="hint"></p>
+        <div id="rc-browse-list" class="rc-list"></div>
+        <div class="more-row"><button id="rc-browse-more" class="btn" type="button" hidden>＋ แสดงเพิ่มอีก 10</button></div>
+      </div>
+      <div id="rc-list" class="rc-list"></div>
+      <p id="rc-empty" class="muted" hidden></p>
+    </div>
+    <div class="set-foot">
+      <p id="rc-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="rc-close">ปิด</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Prompt สำหรับ Meta AI: AI คิดให้รายฉาก → คัดลอกไปวางใน meta.ai (meta.ai ฝังใน iframe ไม่ได้ จึงเปิดเป็นแท็บใหม่) -->
+<dialog id="prompts" aria-labelledby="pr-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="pr-h">Prompt สำหรับ Meta AI</h2><div class="hint" id="pr-sub"></div></div>
+      <button type="button" class="btn ghost icon" id="pr-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="pr-body">
+      <p class="hint">วางทีละ prompt ใน Meta AI แล้วดาวน์โหลดคลิป · ถ้ามีตัวเลือกอัตราส่วนให้เลือก 9:16 · prompt ไม่มีข้อความในภาพ เพราะข้อความไทยจะวางทับตอนทำคลิป</p>
+      <div class="pr-bar">
+        <button id="pr-gen" class="btn primary" type="button">✨ ให้ AI คิด prompt</button>
+        <button id="pr-copyall" class="btn" type="button">📋 คัดลอกทั้งหมด</button>
+        <a id="pr-open" class="btn" href="https://www.meta.ai/" target="_blank" rel="noopener noreferrer">เปิด Meta AI ↗</a>
+      </div>
+      <ol id="pr-list" class="pr-list"></ol>
+      <p id="pr-empty" class="muted" hidden>ยังไม่มี prompt — กด “ให้ AI คิด prompt”</p>
+      <section id="pr-merge" class="pr-merge" hidden>
+        <h3>รวมฉากเป็นชุด (ชุดละ 1 คลิป)</h3>
+        <p class="hint">Meta AI สร้างได้คลิปละราว 10 วินาที — เลือกจำนวนฉากต่อ 1 คลิป แล้วสร้างทีละชุด จากนั้นนำคลิปทุกชุดไปต่อกันตามลำดับในแอปตัดต่อ (ทุกชุดใช้สไตล์ภาพเดียวกันเพื่อให้ต่อกันเนียน)</p>
+        <label class="field inline">ฉากต่อ 1 คลิป
+          <select id="pr-group"><option value="1">1 ฉาก (~5 วิ)</option><option value="2" selected>2 ฉาก (~10 วิ)</option><option value="3">3 ฉาก (~15 วิ)</option><option value="99">ทุกฉากเป็นคลิปเดียว</option></select>
+        </label>
+        <div id="pr-sets" class="pr-sets"></div>
+        <div class="pr-head"><b>คำบรรยายทั้งเรื่อง (จากเนื้อหาของคลิป)</b><button type="button" class="btn sm" id="pr-narr-copy">📋 คัดลอก</button></div>
+        <textarea id="pr-narr" rows="5" spellcheck="false"></textarea>
+        <p class="hint">คำบรรยายไว้ใช้เป็นเสียงพากย์หรือซับในแอปตัดต่อ ไม่ต้องวางใน Meta AI</p>
+      </section>
+    </div>
+    <div class="set-foot">
+      <p id="pr-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="pr-close">ปิด</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Prompt สร้างรูป: รูปปก 1 + รายฉาก → คัดลอกไปวางใน Meta AI / ChatGPT (ระบบเติมอัตราส่วนภาพให้ตามที่เลือก) -->
+<dialog id="imgp" aria-labelledby="ip-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="ip-h">Prompt สร้างรูป</h2><div class="hint" id="ip-sub"></div></div>
+      <button type="button" class="btn ghost icon" id="ip-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="pr-body">
+      <p class="hint">รูปแรกคือรูปปก ที่เหลือรายฉาก · วางทีละ prompt ใน Meta AI หรือ ChatGPT แล้วบันทึกรูป · prompt ไม่มีตัวหนังสือในภาพ ใส่ข้อความไทยทับเองตอนทำโพสต์</p>
+      <div class="pr-bar">
+        <label class="field inline">แบบ
+          <select id="ip-mode"><option value="multi">หลายรูป (ปก + รายฉาก)</option><option value="single">รูปเดียว (โพสต์เดียว)</option></select>
+        </label>
+        <button id="ip-gen" class="btn primary" type="button">✨ ให้ AI คิด prompt รูป</button>
+        <label class="field inline">อัตราส่วน
+          <select id="ip-ratio"><option value="vertical 9:16 aspect ratio">9:16 แนวตั้ง (Reels / สตอรี่)</option><option value="4:5 portrait aspect ratio" selected>4:5 โพสต์ฟีด</option><option value="square 1:1 aspect ratio">1:1 สี่เหลี่ยมจัตุรัส</option><option value="horizontal 16:9 aspect ratio">16:9 แนวนอน</option></select>
+        </label>
+        <label class="check" title="ChatGPT วาดตัวหนังสือไทยได้ดีกว่า Meta AI แต่ตรวจตัวสะกดทุกครั้ง"><input type="checkbox" id="ip-text"> ใส่ข้อความไทยในรูปด้วย</label>
+        <button id="ip-copyall" class="btn" type="button">📋 คัดลอกทั้งหมด</button>
+        <a class="btn" href="https://www.meta.ai/" target="_blank" rel="noopener noreferrer">เปิด Meta AI ↗</a>
+      </div>
+      <ol id="ip-list" class="pr-list"></ol>
+      <p id="ip-empty" class="muted" hidden>ยังไม่มี prompt รูป — กด “ให้ AI คิด prompt รูป”</p>
+    </div>
+    <div class="set-foot">
+      <p id="ip-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="ip-close">ปิด</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- โปรเจกต์เรื่อง: หนังสั้นหลายช็อต (เรื่อง → คลังตัวละคร/สถานที่ → ช็อต + prompt ฝังรายละเอียดตัวละคร) -->
+<dialog id="story" aria-labelledby="st-h">
+  <div class="set st">
+    <div class="set-head">
+      <div><h2 id="st-h">🎞 โปรเจกต์เรื่อง</h2><div class="hint">หนังสั้นหลายช็อต — ตัวละคร/สถานที่เดิมทุกช็อต · สร้างช็อตละ ~8 วินาทีใน Meta AI แล้วนำมาต่อกัน</div></div>
+      <button type="button" class="btn ghost icon" id="st-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="st-bar">
+      <select id="st-sel" aria-label="เลือกโปรเจกต์"></select>
+      <button id="st-new" class="btn sm" type="button">＋ โปรเจกต์ใหม่</button>
+      <button id="st-del" class="btn sm danger" type="button" title="ลบโปรเจกต์นี้">🗑</button>
+    </div>
+    <div id="st-empty" class="st-empty" hidden>
+      <p>ยังไม่มีโปรเจกต์เรื่อง</p>
+      <button id="st-new2" class="btn primary" type="button">＋ สร้างโปรเจกต์แรก</button>
+    </div>
+    <div id="st-main" hidden>
+      <div id="st-tabs" class="seg st-tabs" role="group" aria-label="ส่วนของโปรเจกต์">
+        <button type="button" data-t="story" aria-pressed="true">📖 เรื่อง</button>
+        <button type="button" data-t="bible" aria-pressed="false">👤 ตัวละคร/สถานที่</button>
+        <button type="button" data-t="shots" aria-pressed="false">🎬 ช็อต</button>
+      </div>
+      <div id="st-body" class="st-body"></div>
+    </div>
+    <div class="set-foot">
+      <p id="st-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="st-close">ปิด</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ตัวเล่นวิดีโอตัวเดียวใช้ร่วมทั้งคลัง (คลังมีคลิปเยอะก็ไม่โหลดวิดีโอหลายอันพร้อมกัน) -->
+<dialog id="player" aria-label="เล่นคลิป">
+  <button type="button" class="btn ghost icon" id="player-x" aria-label="ปิด">✕</button>
+  <video id="player-v" controls playsinline></video>
+</dialog>
+
+<!-- แถบความคืบหน้างาน (เรนเดอร์/AI/ดึงข่าว) — ลอยมุมซ้ายล่าง มองเห็นเสมอไม่ว่าเลื่อนอยู่ตรงไหน -->
+<div id="task" class="task" role="progressbar" aria-label="ความคืบหน้างาน" aria-valuemin="0" aria-valuemax="100" hidden>
+  <div class="task-top"><span id="task-label"></span><b id="task-pct"></b><button id="task-stop" type="button" class="task-stop" title="หยุดงานนี้" hidden>✕ หยุด</button></div>
+  <div class="task-track"><div id="task-fill" class="task-fill"></div></div>
+</div>
+
+<!-- หน้าต่างถามยืนยัน/ถามค่า ในตัวแอป (แทน confirm()/prompt() ของเบราว์เซอร์ ซึ่งบางหน้าจอไม่รองรับ) -->
+<dialog id="ask" aria-labelledby="ask-t">
+  <form method="dialog" class="ask">
+    <h3 id="ask-t"></h3>
+    <p id="ask-msg" class="ask-msg"></p>
+    <input id="ask-in" hidden autocomplete="off" spellcheck="false">
+    <div class="ask-btns">
+      <button type="button" class="btn ghost" id="ask-no">ยกเลิก</button>
+      <button type="submit" value="yes" class="btn primary" id="ask-yes">ตกลง</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="generators.js"></script>
+<script src="render.js"></script>
+<script src="app.js"></script>
+<script src="story.js"></script>
+</body>
+</html>

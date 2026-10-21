@@ -1,0 +1,13 @@
+data/
+output/
+config.json
+node_modules/
+music/
+# สำรองข้อมูลก่อนรวมระบบ (มีฐานข้อมูลจริงของผู้ใช้)
+backups/
+*.log
+# กุญแจส่วนตัวสำหรับเซ็นส่วนเสริม Chrome — ห้ามหลุด
+extension.pem
+extension.crx
+# โลโก้ที่ผู้ใช้อัปโหลด (ข้อมูลผู้ใช้ ไม่ใช่โค้ด)
+brand-logo.png

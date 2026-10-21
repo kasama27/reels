@@ -1,0 +1,7 @@
+{
+  "port": 8791,
+  "anthropicKey": "sk-ant-...",
+  "model": "claude-sonnet-5-5",
+  "ffmpeg": "ffmpeg",
+  "fontFile": ""
+}

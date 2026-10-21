@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Arn Reels Companion",
+  "version": "0.2.0",
+  "description": "ช่วยวาง prompt ของช็อตจาก Arn Reels ลงในช่องของ Meta AI / Google Flow และส่งรูปหรือวิดีโอที่สร้างเสร็จกลับเข้าโปรเจกต์ — คุณเป็นคนกดสร้างเองทุกครั้ง",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8791/*",
+    "http://localhost:8791/*",
+    "https://*.meta.ai/*",
+    "https://*.facebook.com/*",
+    "https://*.fbcdn.net/*",
+    "https://*.fbsbx.com/*",
+    "https://flow.google.com/*",
+    "https://*.googleusercontent.com/*",
+    "https://storage.googleapis.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.meta.ai/*", "https://meta.ai/*", "https://flow.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "action": { "default_title": "Arn Reels Companion — ตั้งค่า" },
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
+}
