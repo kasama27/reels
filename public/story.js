@@ -15,8 +15,10 @@
 
   async function loadList(selectId) {
     list = await api('GET', '/api/story/projects');
-    const id = selectId ?? cur?.project.id ?? list[0]?.id;
-    cur = id && list.some((p) => p.id === id) ? await api('GET', `/api/story/projects/${id}`) : null;
+    // โปรเจกต์ที่เปิดค้างไว้อาจถูกลบไปแล้ว (จากที่อื่น/แท็บอื่น) → ตกไปเปิดอันแรกในรายการ ไม่ใช่ขึ้นว่า "ยังไม่มีโปรเจกต์"
+    let id = selectId ?? cur?.project.id;
+    if (!list.some((p) => p.id === id)) id = list[0]?.id;
+    cur = id ? await api('GET', `/api/story/projects/${id}`) : null;
   }
 
   function render() {
