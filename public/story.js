@@ -10,7 +10,7 @@
 
   // เว็บที่ไปสร้างรูป/คลิปช็อต — ใช้แคตตาล็อกร่วมจาก generators.js (ร่วมกับหน้าคลิปเร็ว)
   const GEN = window.ARN_GEN;
-  const genOf = (p) => GEN[p.generator] || GEN.chatgpt;
+  const genOf = (p) => GEN[p.generator] || GEN.flow;
   const fmtSec =(n) => (n >= 60 ? `${Math.floor(n / 60)} นาที${n % 60 ? ` ${n % 60} วิ` : ''}` : `${n} วิ`);
 
   async function loadList(selectId) {
@@ -80,7 +80,8 @@
       cur = await api(method, url, body);
       then?.();
       refreshSums();
-    } catch (e) { $('st-msg').textContent = e.message; toast(e.message, true); }
+      return true;
+    } catch (e) { $('st-msg').textContent = e.message; toast(e.message, true); return false; }
   }
   const field = (label, el, hint) => h('label', { class: 'field' }, h('span', { class: 'cap-label', textContent: label }), ...(hint ? [h('span', { class: 'hint', textContent: hint })] : []), el);
 
@@ -96,8 +97,7 @@
     aspect.value = p.aspect;
     const media = h('select', {}, new Option('🎬 วิดีโอสั้นต่อช็อต', 'video'), new Option('🖼 ภาพนิ่งต่อช็อต', 'image'));
     media.value = p.media || 'video';
-    const gen = h('select', {}, ...Object.entries(GEN).map(([k, g]) => new Option(g.name, k)));
-    gen.value = GEN[p.generator] ? p.generator : 'chatgpt';
+    const gen = genSelect(p);
     const style = h('textarea', { rows: 2, value: p.style, placeholder: 'ว่าง = ใช้โทนภาพของ “สไตล์ประจำเพจ” ในตั้งค่า (อังกฤษ)' });
     const est = h('p', { class: 'hint' });
     const estText = () => `แบ่งได้ประมาณ ${Math.max(1, Math.ceil(cur.project.total_sec / cur.project.shot_sec))} ช็อต (${fmtSec(cur.project.total_sec)} ÷ ช็อตละ ${cur.project.shot_sec} วิ)${cur.project.media === 'image' ? '' : ' — โมเดลวิดีโอส่วนใหญ่สร้างได้ครั้งละประมาณ 10 วินาที'}`;
@@ -107,7 +107,17 @@
     total.addEventListener('change', () => patch('total_sec', Number(total.value)));
     shot.addEventListener('change', () => patch('shot_sec', Number(shot.value)));
     aspect.addEventListener('change', () => patch('aspect', aspect.value));
-    media.addEventListener('change', () => patch('media', media.value));
+    // เปลี่ยนวิดีโอ↔ภาพนิ่ง: prompt ทุกช็อตถูกประกอบใหม่ (ทับที่แก้เอง) → ถามก่อนถ้ามีช็อตแล้ว
+    // และถ้าเว็บที่เลือกไว้ทำแบบใหม่ไม่ได้ (เช่น ChatGPT กับวิดีโอ) สลับเป็น Google Flow ให้
+    media.addEventListener('change', async () => {
+      const m = media.value;
+      if (cur.shots.length && !(await uiConfirm(`เปลี่ยนเป็น${m === 'image' ? 'ภาพนิ่ง' : 'วิดีโอ'} จะประกอบ prompt ใหม่ทั้ง ${cur.shots.length} ช็อต (prompt ที่แก้เองจะถูกทับ) — ไฟล์ที่แนบไว้ยังอยู่`, { title: 'เปลี่ยนรูปแบบช็อต', ok: 'เปลี่ยน' }))) { media.value = p.media || 'video'; return; }
+      const body = { media: m };
+      if (!GEN[p.generator]?.media.includes(m)) body.generator = 'flow';
+      if (!(await save('PATCH', `/api/story/projects/${p.id}`, body))) return render();
+      if (body.generator) toast(`${GEN[p.generator]?.short || 'เว็บเดิม'} ทำ${m === 'image' ? 'รูป' : 'วิดีโอ'}ไม่ได้ — สลับเป็น Google Flow ให้แล้ว`);
+      render(); // ตัวเลือกเว็บ/คำอธิบายเปลี่ยนตามรูปแบบ
+    });
     gen.addEventListener('change', () => patch('generator', gen.value));
     style.addEventListener('change', () => patch('style', style.value));
     // จัดเป็นการ์ดพับได้ตามลำดับการทำงาน: เนื้อเรื่อง → การผลิต → โทนภาพ → แหล่งข้อมูล (หัวการ์ดสรุปค่าปัจจุบันไว้ ไม่ต้องกางก็เห็น)
@@ -117,8 +127,8 @@
         field('ชื่อเรื่อง', title), field('เรื่องย่อ / เนื้อเรื่อง', premise)),
       acc('prod', '⚙ การผลิต', sm.prod, true,
         h('div', { class: 'st-grid2' },
-          field('รูปแบบของแต่ละช็อต', media, 'ภาพนิ่ง = สร้างรูปเอง (ไม่ใช้ภาพต้นฉบับของใคร) แล้วซูม/แพนตอนรวมคลิป'),
-          field('ไปสร้างรูป/คลิปที่ไหน', gen, 'กำหนดคำแนะนำและลิงก์ในแท็บช็อต')),
+          field('รูปแบบของแต่ละช็อต', media, p.media === 'image' ? 'สร้างรูปเองทีละช็อต (ไม่ใช้ภาพต้นฉบับของใคร) แล้วซูม/แพนให้ขยับตอนรวมคลิป' : 'สร้างคลิปสั้นทีละช็อตด้วย AI วิดีโอ แล้วต่อกันเป็นคลิปเดียว'),
+          field(`ไปสร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ไหน`, gen, 'กำหนดคำแนะนำและลิงก์ในแท็บช็อต')),
         h('div', { class: 'st-row' }, field('ความยาวรวม (วินาที)', total), field('ความยาวต่อช็อต (วินาที)', shot), field('อัตราส่วน', aspect)),
         est),
       acc('look', '🎨 โทนภาพ (คุมทุกช็อตให้เหมือนกัน)', sm.look, true, lookBox(style)),
@@ -157,17 +167,32 @@
     return d;
   }
 
+  // ตัวเลือกเว็บสร้าง กรองตามรูปแบบช็อต (รูป/วิดีโอ) — ถ้าค่าที่เลือกไว้ทำแบบนี้ไม่ได้ ยังโชว์ไว้แต่บอกชัด ๆ ให้เปลี่ยน
+  function genSelect(p) {
+    const m = p.media || 'video';
+    const keys = window.ARN_GEN_FOR(m);
+    const sel = h('select', { 'aria-label': `สร้าง${m === 'image' ? 'รูป' : 'คลิป'}ที่ไหน` }, ...keys.map((k) => new Option(GEN[k].name, k)));
+    if (GEN[p.generator] && !keys.includes(p.generator)) sel.prepend(new Option(`${GEN[p.generator].name} (ทำ${m === 'image' ? 'รูป' : 'วิดีโอ'}ไม่ได้ — เลือกใหม่)`, p.generator));
+    sel.value = GEN[p.generator] ? p.generator : 'flow';
+    return sel;
+  }
+
   // ตัวเลือก "สร้างที่ไหน" ในแท็บช็อตเลย (ค่าเดียวกับในแท็บเรื่อง → การผลิต) + ลิงก์เปิดเว็บและคำแนะนำของเว็บนั้น
+  // เปลี่ยนแล้วอัปเดตเฉพาะลิงก์/คำแนะนำ ไม่วาดทั้งหน้าใหม่ (กันหน้าเลื่อนกลับบนสุด/ปิดกรอบที่เปิดอยู่)
   function genPicker() {
     const p = cur.project;
-    const sel = h('select', { 'aria-label': 'สร้างรูปที่ไหน' }, ...Object.entries(GEN).map(([k, g]) => new Option(g.name, k)));
-    sel.value = GEN[p.generator] ? p.generator : 'chatgpt';
-    sel.addEventListener('change', () => save('PATCH', `/api/story/projects/${p.id}`, { generator: sel.value }, () => render()));
-    const g = genOf(p);
+    const sel = genSelect(p);
+    const link = h('a', { class: 'btn sm', target: '_blank', rel: 'noopener noreferrer' });
+    const tip = h('p', { class: 'hint' });
+    const paint = () => {
+      const g = genOf(cur.project);
+      link.hidden = !g.url; link.href = g.url || '#'; link.textContent = `↗ เปิด ${g.short}`;
+      tip.textContent = g.tip(cur.project.aspect, cur.project.media);
+    };
+    sel.addEventListener('change', () => save('PATCH', `/api/story/projects/${p.id}`, { generator: sel.value }, paint));
+    paint();
     return h('div', { class: 'st-gen' },
-      h('div', { class: 'row' }, h('span', { class: 'cap-label', textContent: `สร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่` }), sel,
-        ...(g.url ? [h('a', { class: 'btn sm', href: g.url, target: '_blank', rel: 'noopener noreferrer', textContent: `↗ เปิด ${g.name.replace(/\s*\(.*$/, '')}` })] : [])),
-      h('p', { class: 'hint', textContent: g.tip(p.aspect) }));
+      h('div', { class: 'row' }, h('span', { class: 'cap-label', textContent: `สร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่` }), sel, link), tip);
   }
 
   // ---------- prompt รวมฉาก: ต่อหลายช็อตเป็นย่อหน้าเดียวสำหรับโมเดลวิดีโอ (~10–15 วินาที/ครั้ง) ----------
@@ -208,11 +233,25 @@
     const [filmEl, filmF] = f('film', 'เนื้อภาพ / ฟิล์ม', 'เช่น vintage 35mm film grain, deep sepia shadows');
     const [soundEl, soundF] = f('sound', 'เสียง (ใช้กับ prompt วิดีโอ)', 'เช่น traditional percussion, realistic combat sound effects');
     const els = [refEl, lightEl, filmEl, soundEl];
-    const persist = () => save('PATCH', `/api/story/projects/${p.id}`, { look: Object.fromEntries(els.map((e) => [e.dataset.k, e.value])) }, () => toast('บันทึกโทนภาพแล้ว — ประกอบ prompt ทุกช็อตใหม่ให้แล้ว'));
+    const saved = () => Object.fromEntries(els.map((e) => [e.dataset.k, String(look[e.dataset.k] || '')]));
+    const restore = () => { els.forEach((e) => { e.value = saved()[e.dataset.k]; }); preset.value = (cur.looks || []).find((x) => x.ref && x.ref === look.ref)?.id || ''; };
+    // บันทึกโทน = ประกอบ prompt ทุกช็อตใหม่ (ทับที่แก้เอง) → ถ้ามีช็อตแล้ว ถามครั้งแรกครั้งเดียวต่อการเปิดหน้านี้
+    let okRebuild = false;
+    const persist = async () => {
+      if (cur.shots.length && !okRebuild) {
+        if (!(await uiConfirm(`เปลี่ยนโทนภาพจะประกอบ prompt ใหม่ทั้ง ${cur.shots.length} ช็อต (prompt ที่แก้เองจะถูกทับ) — ไฟล์ที่แนบไว้ยังอยู่`, { title: 'เปลี่ยนโทนภาพ', ok: 'เปลี่ยน' }))) { restore(); return; }
+        okRebuild = true;
+      }
+      const next = Object.fromEntries(els.map((e) => [e.dataset.k, e.value]));
+      await save('PATCH', `/api/story/projects/${p.id}`, { look: next }, () => toast(cur.shots.length ? 'บันทึกโทนภาพแล้ว — ประกอบ prompt ทุกช็อตใหม่ให้แล้ว' : 'บันทึกโทนภาพแล้ว')) && (look = next);
+    };
     els.forEach((e) => e.addEventListener('change', persist));
-    preset.addEventListener('change', () => {
+    preset.addEventListener('change', async () => {
       const x = (cur.looks || []).find((y) => y.id === preset.value);
       if (!x) return;
+      // ช่องที่พิมพ์เองไว้ (ไม่ใช่ค่าจากพรีเซ็ตเดิม) จะถูกทับ → ถามก่อน
+      const custom = els.some((e) => e.value.trim()) && !(cur.looks || []).some((y) => y.ref === refEl.value && y.light === lightEl.value && y.film === filmEl.value && y.sound === soundEl.value);
+      if (custom && !(await uiConfirm('แทนที่ข้อความโทนภาพที่แก้เองไว้ด้วยโทนสำเร็จรูปนี้?', { title: 'ใช้โทนสำเร็จรูป', ok: 'แทนที่' }))) { restore(); return; }
       refEl.value = x.ref; lightEl.value = x.light; filmEl.value = x.film; soundEl.value = x.sound;
       persist();
     });
@@ -384,7 +423,7 @@
       genPicker(),
       mergedBox(),
       stage,
-      h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · สร้างแล้ว ${done}/${cur.shots.length} — วาง prompt ทีละช็อตใน Meta AI แล้วเปลี่ยนสถานะเมื่อได้คลิป` : 'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
+      h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · สร้างแล้ว ${done}/${cur.shots.length} — วาง prompt ทีละช็อตใน ${genOf(p).short} แล้วแนบ${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ได้เข้าช็อต` : 'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
     wrap.append(assemblePanel());
     cur.shots.forEach((s, i) => wrap.append(shotCard(s, i)));
     return wrap;
@@ -397,7 +436,9 @@
     const chk = (label, on, disabled = false, title = '') => { const i = h('input', { type: 'checkbox', checked: on, disabled }); return [i, h('label', { class: 'st-opt', title }, i, label)]; };
     const [voice, voiceL] = chk('เสียงบรรยาย (อ่านคำบรรยายของแต่ละช็อต)', !!status.tts && cur.shots.some((s) => s.narration), !status.tts, status.tts ? '' : 'ยังไม่ได้ตั้งค่าเสียงพากย์ในตั้งค่า');
     const [subs, subsL] = chk('ซับไตเติล (ข้อความบรรยายบนจอ)', true);
+    const still = p.media === 'image', noun = still ? 'รูป' : 'คลิป';
     const [keep, keepL] = chk('คงเสียงเดิมในคลิป', false);
+    keepL.hidden = still; // ภาพนิ่งไม่มีเสียงเดิมให้คง
     const [logo, logoL] = chk('ลายน้ำโลโก้', !!status.logo && status.brand?.logoOn !== false, !status.logo, status.logo ? '' : 'ยังไม่ได้ตั้งโลโก้ (ตั้งค่า → สไตล์ประจำเพจ)');
     const music = h('select', {}); fillMusic(music, 'none');
     const badge = h('input', { placeholder: 'ป้ายมุมคลิป เช่น ตอนที่ 20 (ไม่บังคับ)', maxLength: 40 });
@@ -407,13 +448,13 @@
     go.addEventListener('click', () => guard(go, async () => {
       const have = calc();
       const missing = cur.shots.filter((s) => !s.video_file && s.status !== 'rejected').length;
-      if (missing && !(await uiConfirm(`ยังมี ${missing} ช็อตที่ยังไม่มีคลิป — รวมเฉพาะช็อตที่มีคลิป (ข้ามช็อตที่เหลือ)?`, { title: 'รวมคลิป', ok: 'รวมเลย' }))) return;
+      if (missing && !(await uiConfirm(`ยังมี ${missing} ช็อตที่ยังไม่มี${noun} — รวมเฉพาะช็อตที่มี${noun} (ข้ามช็อตที่เหลือ)?`, { title: 'รวมคลิป', ok: 'รวมเลย' }))) return;
       go.textContent = '⏳ กำลังรวมคลิป…';
       await assemble(have, { voice: voice.checked, subs: subs.checked, keepAudio: keep.checked, music: music.value, logo: logo.checked && status.logo ? `/brand/logo.png?v=${status.logo.v}` : '', badge: badge.value.trim() });
     }, (e) => { $('st-msg').textContent = e.message; toast(e.message, true); }).finally(upd));
     const panel = h('section', { class: 'st-asm' },
       h('h3', { textContent: '🎞 รวมเป็นคลิปเดียว' }),
-      h('p', { class: 'hint', textContent: `ต่อคลิปของช็อตที่แนบแล้ว (ยกเว้นที่ติด ❌) ตามลำดับ เป็นคลิป ${p.aspect} คลิปเดียว บันทึกเข้าคลังคลิป — ใช้เวลาเท่าความยาวคลิป ต้องเปิดแท็บนี้ค้างไว้` }),
+      h('p', { class: 'hint', textContent: `ต่อ${noun}ของช็อตที่แนบแล้ว (ยกเว้นที่ติด ❌) ตามลำดับ${still ? ' แต่ละรูปซูม/แพนช้า ๆ ' : ' '}เป็นวิดีโอ ${p.aspect} คลิปเดียว บันทึกเข้าคลังคลิป — ใช้เวลาเท่าความยาวคลิป ต้องเปิดหน้านี้ค้างไว้ (กด ✕ หยุด ที่การ์ดความคืบหน้าได้)` }),
       h('div', { class: 'st-opts' }, voiceL, subsL, keepL, logoL),
       h('div', { class: 'st-row' }, field('เพลงประกอบ', music), field('ป้ายบนคลิป', badge)),
       h('div', { class: 'row' }, go));
@@ -426,12 +467,13 @@
     const canvas = document.createElement('canvas');
     canvas.id = 'rec';
     document.body.append(canvas);
-    const tid = task.start(`รวมคลิป “${p.title}”`, 0.02, 'กำลังรวมคลิป');
+    const ctrl = new AbortController(); // ปุ่ม "หยุด" บนการ์ดความคืบหน้า → เลิกรวม ไม่บันทึกอะไรลงคลัง
+    const tid = task.start(`รวมคลิป “${p.title}”`, 0.02, 'กำลังรวมคลิป', ctrl);
     let ok = false;
     try {
       const th = status.themes.find((t) => t.id === status.brand?.theme) || status.themes[0];
       const r = await ReelRender.assemble(shots.map((s) => ({ url: `/story-media/${s.video_file}`, narration: s.narration, duration: s.duration })), {
-        ...o, canvas, aspect: p.aspect, theme: th,
+        ...o, canvas, aspect: p.aspect, theme: th, signal: ctrl.signal,
         onProgress: (x) => task.set(tid, 0.1 + x * 0.82, `กำลังรวมคลิป “${p.title}”`),
         onStatus: (t) => task.set(tid, /เสียง/.test(t) ? 0.06 : 0.04, t),
       });
@@ -520,7 +562,7 @@
       ...(byKind('prop').length ? [field('ของประกอบ', h('div', { class: 'st-chips' }, ...byKind('prop').map((e) => chip(e, 'prop_ids'))))] : []),
       action, camera, visText, narr,
       h('div', { class: 'st-row' }, field('สถานะต้นช็อต', before), field('สถานะท้ายช็อต', after)),
-      h('div', { class: 'st-prompt-head' }, h('span', { class: 'cap-label', textContent: still ? `Prompt สร้างรูป (แก้ได้) — วางใน ${genOf(cur.project).name}` : 'Prompt สำหรับ Meta AI (แก้ได้)' }), copy),
+      h('div', { class: 'st-prompt-head' }, h('span', { class: 'cap-label', textContent: still ? `Prompt สร้างรูป (แก้ได้) — วางใน ${genOf(cur.project).name}` : `Prompt วิดีโอ (แก้ได้) — วางใน ${genOf(cur.project).name}` }), copy),
       prompt,
       vbox);
     card.dataset.i = String(i);
@@ -555,7 +597,7 @@
     const still = cur.project.media === 'image';
     const noun = still ? 'รูป' : 'คลิป';
     const input = h('input', { type: 'file', accept: still ? 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp' : 'video/mp4,video/webm,.mp4,.webm', hidden: true });
-    const label = () => (s.video_file ? `🔁 เปลี่ยน${noun}` : `📎 แนบ${noun}ที่ได้จาก Meta AI`);
+    const label = () => (s.video_file ? `🔁 เปลี่ยน${noun}` : `📎 แนบ${noun}ที่ได้จาก ${genOf(cur.project).short}`);
     const pick = h('button', { class: 'btn sm', type: 'button', textContent: label() });
     pick.addEventListener('click', () => input.click());
     input.addEventListener('change', () => {
@@ -567,7 +609,7 @@
     box.addEventListener('drop', (e) => { e.preventDefault(); box.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) guard(pick, () => uploadVideo(s, f), (er) => toast(er.message, true)); });
     const row = h('div', { class: 'row' }, pick, input);
     if (!s.video_file) {
-      box.replaceChildren(h('p', { class: 'hint', textContent: still ? `ยังไม่มีรูป — สร้างด้วย prompt ด้านบนใน ${genOf(cur.project).name} แล้วแนบรูปที่ดาวน์โหลดตรงนี้ หรือลากไฟล์มาวาง` : 'ยังไม่มีคลิป — สร้างด้วย prompt ด้านบนใน Meta AI แล้วแนบไฟล์ที่ดาวน์โหลด (.mp4) ตรงนี้ หรือลากไฟล์มาวาง' }), row);
+      box.replaceChildren(h('p', { class: 'hint', textContent: still ? `ยังไม่มีรูป — สร้างด้วย prompt ด้านบนใน ${genOf(cur.project).name} แล้วแนบรูปที่ดาวน์โหลดตรงนี้ หรือลากไฟล์มาวาง` : `ยังไม่มีคลิป — สร้างด้วย prompt ด้านบนใน ${genOf(cur.project).short} แล้วแนบไฟล์ที่ดาวน์โหลด (.mp4) ตรงนี้ หรือลากไฟล์มาวาง` }), row);
       return;
     }
     const video = isImg(s.video_file)

@@ -30,10 +30,12 @@ const TASK_LABELS = [
   [/^\/api\/clips\/\d+\/products$/, 'กำลังเลือกสินค้า', 'กำลังเลือก'],
   [/^\/api\/products\/import$/, 'กำลังนำเข้าสินค้า', 'กำลังนำเข้า'],
   [/^\/api\/pondy\/preview$/, 'กำลังอ่านข้อมูลจากมือถือ', 'กำลังอ่านมือถือ'],
+  [/^\/api\/pondy\/browse$/, 'กำลังอ่านสินค้าจากมือถือ', 'กำลังอ่านมือถือ'],
   [/^\/api\/pondy\/import$/, 'กำลังนำเข้าสินค้าจากมือถือ', 'กำลังนำเข้า'],
 ];
 
-async function api(method, url, body, { quiet = false } = {}) {
+// opts.signal: ผู้เรียกที่จัดการงานหลายขั้นเอง (quiet) ส่ง signal ของตัวเองมาเพื่อให้กดหยุดได้
+async function api(method, url, body, { quiet = false, signal } = {}) {
   const hit = !quiet && method === 'POST' ? TASK_LABELS.find(([re]) => re.test(url)) : null;
   // งาน AI/ดึงข้อมูลที่กินเวลานาน ยกเลิกได้ด้วยปุ่มหยุด (abort → ตัดการเชื่อมต่อ → เซิร์ฟเวอร์ฆ่าโปรเซส)
   const ctrl = hit ? new AbortController() : null;
@@ -43,13 +45,13 @@ async function api(method, url, body, { quiet = false } = {}) {
       method,
       headers: body ? { 'content-type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: ctrl?.signal,
+      signal: signal || ctrl?.signal,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('หยุดแล้ว');
+    if (e.name === 'AbortError') throw new Error(STOPPED);
     throw e;
   } finally { if (tid) task.end(tid); }
 }
@@ -58,6 +60,13 @@ async function api(method, url, body, { quiet = false } = {}) {
 // งานที่เริ่มระหว่างที่ปุ่มกำลังทำงาน (guard) จะ "เกาะ" กับปุ่มนั้น: ข้อความบนปุ่มเปลี่ยนเป็น ⏳ ขั้นตอน + % (หรือวินาที)
 // และมีแถบเติมในปุ่ม — ผู้ใช้เห็นทันทีว่าปุ่มไหนทำงานอยู่ ส่วนงานที่ไม่มีปุ่ม (เช่น วางรูป) ใช้การ์ดลอยมุมซ้ายล่าง
 const busyStack = [];
+
+// หน้าต่างแบบ modal (dialog.showModal) อยู่ชั้นบนสุดของหน้า บังทุกอย่างที่อยู่นอกมัน รวมการ์ดความคืบหน้าและ toast
+// → ย้าย element ลอยพวกนี้เข้าไปใน dialog ที่เปิดอยู่บนสุด; ปิด dialog แล้วย้ายกลับ (position: fixed ยังอิงหน้าจอเหมือนเดิม)
+const STOPPED = 'หยุดแล้ว';
+function overlayHost() { const open = [...document.querySelectorAll('dialog[open]')]; return open[open.length - 1] || document.body; }
+function liftOverlay(el) { const host = overlayHost(); if (el && el.parentElement !== host) host.append(el); }
+for (const d of document.querySelectorAll('dialog')) d.addEventListener('close', () => { liftOverlay($('task')); liftOverlay($('toast')); });
 
 function paintBtn(t) {
   const b = t.btn;
@@ -89,12 +98,13 @@ const task = (() => {
   if (stop) stop.addEventListener('click', () => { shown?.ctrl?.abort(); });
   function paint() {
     const all = [...tasks.values()];
-    // งานที่ยกเลิกได้ ถึงจะเกาะปุ่ม (ปุ่มถูก disable กดไม่ได้) ก็ยกมาโชว์บนการ์ดเพื่อให้มีปุ่มหยุด
-    for (const t of all) if (t.btn && !t.ctrl) paintBtn(t);
+    for (const t of all) if (t.btn) paintBtn(t); // ปุ่มที่กดอยู่โชว์ ⏳ + เวลา/% เสมอ
+    // งานที่ยกเลิกได้ ถึงจะเกาะปุ่ม (ปุ่มถูก disable กดไม่ได้) ก็ยกมาโชว์บนการ์ดด้วยเพื่อให้มีปุ่มหยุด
     const list = all.filter((t) => !t.btn || t.ctrl);
     if (!list.length) { el.hidden = true; shown = null; if (!all.length) { clearInterval(timer); timer = null; } return; }
     const t = list[list.length - 1]; // แสดงงานที่เริ่มล่าสุด
     shown = t;
+    liftOverlay(el); // ถ้ามีหน้าต่าง (dialog) เปิดอยู่ ย้ายการ์ดเข้าไปในนั้น ไม่งั้นโดนบัง
     el.hidden = false;
     if (stop) stop.hidden = !t.ctrl;
     label.textContent = t.label + (list.length > 1 ? ` (+${list.length - 1})` : '');
@@ -144,6 +154,8 @@ function say(text) { $('msg').textContent = text || ''; }
 let toastTimer = null;
 function toast(text, bad = false) {
   const t = $('toast');
+  if (text === STOPPED) bad = false; // ผู้ใช้กดหยุดเอง ไม่ใช่ข้อผิดพลาด
+  liftOverlay(t);
   t.textContent = text;
   t.className = `toast${bad ? ' bad' : ''}`;
   t.hidden = false;
@@ -205,11 +217,12 @@ async function renderInBrowser(id, onProgress, onStatus = say) {
   canvas.id = 'rec';
   document.body.append(canvas);
   // ความคืบหน้า: เตรียม 0–15% (เสียงพากย์/เพลง) → อัดคลิป 15–93% (วัดจากเส้นเวลาจริง) → บันทึก 95–100%
-  const tid = task.start(`เรนเดอร์ “${clip.title}”`, 0.02, 'กำลังอัดคลิป');
+  const ctrl = new AbortController(); // ปุ่ม "หยุด" บนการ์ดความคืบหน้า → เลิกอัด คลิปคงสถานะร่าง
+  const tid = task.start(`เรนเดอร์ “${clip.title}”`, 0.02, 'กำลังอัดคลิป', ctrl);
   let ok = false;
   try {
     const { blob, mime, duration, thumb, note } = await ReelRender.render(clip, th, {
-      canvas, voice: !!clip.voice, music: clip.music, target: clip.target_sec || 0,
+      canvas, voice: !!clip.voice, music: clip.music, target: clip.target_sec || 0, signal: ctrl.signal,
       images: (() => { try { return JSON.parse(clip.images || '[]').map((p) => ({ url: `/clip-images/${p.file}`, credit: p.credit })); } catch { return []; } })(),
       logo: status.logo && status.brand?.logoOn !== false ? `/brand/logo.png?v=${status.logo.v}` : '',
       onProgress: (p) => { task.set(tid, 0.15 + p * 0.78, `กำลังอัดคลิป “${clip.title}”`); onProgress?.(p); },
@@ -571,8 +584,11 @@ function buildCard(c) {
   refs.btnCaption = action('✨ AI แคปชัน', async () => { await save(); await api('POST', `/api/clips/${c.id}/caption`); });
   refs.btnRender = h('button', { class: 'btn sm', type: 'button', textContent: '🎞 เรนเดอร์ใหม่' });
   refs.btnRender.addEventListener('click', () => guard(refs.btnRender, async () => {
+    // มีวิดีโออยู่แล้ว → เรนเดอร์ใหม่จะทับไฟล์เดิม (และล้างสถานะ "โพสต์แล้ว") ถามก่อน
+    const now = await api('GET', `/api/clips/${c.id}`);
+    if (now.video_file && !(await uiConfirm(`เรนเดอร์ใหม่จะทับวิดีโอเดิมของ “${now.title}”${now.status === 'posted' ? ' และล้างสถานะ “โพสต์แล้ว”' : ''}?`, { title: 'เรนเดอร์ใหม่', ok: 'เรนเดอร์ทับ' }))) return;
     await save();
-    await renderInBrowser(c.id); // ปุ่มแสดง ⏳ กำลังอัดคลิป · NN% ผ่านระบบ task เอง
+    await renderInBrowser(c.id); // ปุ่มแสดง ⏳ กำลังอัดคลิป · NN% ผ่านระบบ task เอง (กด ✕ หยุด ที่การ์ดได้)
     await refresh();
   }));
   refs.btnDel = action('🗑 ลบ', async () => {
@@ -892,7 +908,7 @@ const imgenGen = () => $('imgen-gen').value || 'flow';
   const paint = () => {
     const g = window.ARN_GEN[imgenGen()];
     const a = $('imgen-open'); a.textContent = `↗ เปิด ${g.short}`; a.href = g.url;
-    $('imgen-tip').textContent = g.tip('9:16');
+    $('imgen-tip').textContent = g.tip('9:16', 'image');
   };
   sel.addEventListener('change', () => { try { localStorage.setItem('reels.imgen', sel.value); } catch { /* ไม่เก็บ */ } paint(); });
   paint();
@@ -923,7 +939,7 @@ $('imgen-file').addEventListener('change', (e) => guard($('imgen-up'), async () 
 $('imgen-prompt').addEventListener('click', (ev) => guard(ev.currentTarget, async () => {
   const d = formData();
   if (!d.title.trim() && !d.brief.trim() && !d.script.trim()) throw new Error('ใส่เนื้อหาหรือสคริปต์ก่อน');
-  const clip = await api('POST', '/api/clips', d);
+  const clip = await api('POST', '/api/clips', { ...d, title: d.title.trim() || 'ร่าง prompt รูป (ชั่วคราว)' }); // เซิร์ฟเวอร์บังคับต้องมีชื่อ — ร่างนี้ถูกลบทันทีหลังได้ prompt
   try {
     const r = await api('POST', `/api/clips/${clip.id}/image-prompts`, { single: true });
     let prompts = [];
@@ -1406,22 +1422,25 @@ async function loadFeeds(selectId) {
   await loadFeedItems();
 }
 
+let feedSeq = 0; // เปลี่ยนฟีดเร็ว ๆ แล้วผลของฟีดเก่าตอบช้ากว่า → ทิ้งผลเก่า ไม่ให้ทับรายการของฟีดใหม่
 async function loadFeedItems(fresh = false) {
   const box = $('feed-items');
   const id = $('feed-sel').value;
+  const seq = ++feedSeq;
   if (!id) { box.replaceChildren(); return; }
   box.replaceChildren(h('li', { class: 'hint', textContent: 'กำลังโหลดข่าว…' }));
   try {
     const { feed, items } = await api('GET', `/api/feeds/${id}/items${fresh ? '?fresh=1' : ''}`);
+    if (seq !== feedSeq) return;
     box.replaceChildren(...items.map((it) => feedItem(feed, it)));
     if (!items.length) box.replaceChildren(h('li', { class: 'hint', textContent: 'ฟีดนี้ยังไม่มีข่าว' }));
-  } catch (e) { box.replaceChildren(h('li', { class: 'err', textContent: e.message })); }
+  } catch (e) { if (seq === feedSeq) box.replaceChildren(h('li', { class: 'err', textContent: e.message })); }
 }
 
 // ดึงเนื้อบทความจริง (ย่อหน้าหลัก) — ถ้าอ่านไม่ได้/สั้นเกิน ใช้สรุปจากฟีดแทน
-async function articleText(it, quiet = false) {
+async function articleText(it, quiet = false, signal) {
   try {
-    const a = await api('POST', '/api/news/article', { url: it.link }, { quiet });
+    const a = await api('POST', '/api/news/article', { url: it.link }, { quiet, signal });
     if (a.text.length >= 200) return a.text;
   } catch { /* ใช้สรุปจากฟีดแทน */ }
   return [it.title, it.summary].filter(Boolean).join('\n');
@@ -1447,16 +1466,18 @@ function feedItem(feed, it) {
   const quickBtn = h('button', { class: 'btn sm primary', type: 'button', textContent: '⚡ เรียบเรียง → ลงคลัง' });
   quickBtn.addEventListener('click', () => guard(quickBtn, async () => {
     // 3 ขั้น: ดึงเนื้อข่าว (→35%) → AI เรียบเรียง (→90%) → บันทึกลงคลัง (100%)
-    const tid = task.start(`ข่าว: ${it.title.slice(0, 40)}…`, 0.05, 'กำลังทำ');
+    const ctrl = new AbortController(); // ปุ่ม ✕ หยุด บนการ์ดความคืบหน้า — หยุดได้ทุกขั้น ไม่บันทึกอะไรลงคลัง
+    const tid = task.start(`ข่าว: ${it.title.slice(0, 40)}…`, 0.05, 'กำลังทำ', ctrl);
     let done = false;
     try {
       note.textContent = 'กำลังดึงเนื้อข่าว…';
-      const text = await articleText(it, true);
+      const text = await articleText(it, true, ctrl.signal);
       task.set(tid, 0.35, 'AI กำลังเรียบเรียงข่าว…');
       note.textContent = 'AI กำลังเรียบเรียง…';
-      const r = await api('POST', '/api/news/rewrite', { text, source: sourceLine, target_sec: targetSec() }, { quiet: true });
+      const r = await api('POST', '/api/news/rewrite', { text, source: sourceLine, target_sec: targetSec() }, { quiet: true, signal: ctrl.signal });
       task.set(tid, 0.75, 'กำลังดึงรูปจากที่มา…');
       const imgs = await autoImages([cleanLink(it.link)]);
+      if (ctrl.signal.aborted) throw new Error(STOPPED);
       task.set(tid, 0.9, 'กำลังบันทึกลงคลัง…');
       await api('POST', '/api/clips', {
         images: imgs,
@@ -1546,7 +1567,7 @@ $('b-create').addEventListener('click', (ev) => guard(ev.target, async () => {
   try {
     await renderInBrowser(clip.id, (p) => say(`กำลังอัดคลิป ${Math.round(p * 100)}% — เปิดแท็บนี้ค้างไว้`));
   } catch (e) {
-    say(`เก็บเป็นร่างแล้ว แต่เรนเดอร์ไม่สำเร็จ: ${e.message}`);
+    say(e.message === STOPPED ? 'หยุดเรนเดอร์แล้ว — คลิปเก็บเป็นร่างในคลัง กด “🎞 เรนเดอร์ใหม่” ได้ภายหลัง' : `เก็บเป็นร่างแล้ว แต่เรนเดอร์ไม่สำเร็จ: ${e.message}`);
     await refresh();
     return;
   }
@@ -1818,13 +1839,13 @@ $('set-form').addEventListener('submit', (e) => {
 });
 
 $('s-test').addEventListener('click', (e) => guard(e.currentTarget, async () => {
-  $('s-msg').textContent = 'กำลังสร้างเสียงทดสอบ…';
-  await saveSettings(); // ทดสอบด้วยค่าที่เห็นอยู่ตอนนี้
+  $('s-msg').textContent = 'บันทึกค่าที่เห็นอยู่ แล้วกำลังสร้างเสียงทดสอบ…';
+  await saveSettings(); // ทดสอบด้วยค่าที่เห็นอยู่ตอนนี้ (บันทึกจริง — บอกผู้ใช้ชัด ๆ กันสงสัยว่าคีย์หายหรือยัง)
   const r = await api('POST', '/api/tts/test');
   const a = $('s-audio');
   a.src = `${r.file}?t=${Date.now()}`;
   a.hidden = false;
-  $('s-msg').textContent = '';
+  $('s-msg').textContent = '✓ บันทึกการตั้งค่าแล้ว — ฟังเสียงทดสอบด้านล่าง';
   a.play().catch(() => {});
 }, (err) => { $('s-msg').textContent = err.message; }));
 

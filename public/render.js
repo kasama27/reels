@@ -360,12 +360,19 @@ window.ReelRender = (() => {
   });
 
   // เสียงพากย์ต่อบรรทัด (ขอ WAV จากเซิร์ฟเวอร์ครั้งเดียวทั้งชุด) → AudioBuffer ตรงตำแหน่ง, บรรทัดว่างได้ null
-  async function ttsBuffers(ac, lines, onStatus, label) {
+  // ผู้ใช้กดหยุด (opts.signal) → โยน error ข้อความเดียวกับฝั่ง api() ให้หน้าเว็บแสดงแบบไม่ใช่ข้อผิดพลาด
+  const STOPPED = 'หยุดแล้ว';
+  const checkStop = (signal) => { if (signal?.aborted) throw new Error(STOPPED); };
+
+  async function ttsBuffers(ac, lines, onStatus, label, signal) {
     const out = lines.map(() => null);
     const idx = lines.map((s, i) => (s && s.trim() ? i : -1)).filter((i) => i >= 0);
     if (!idx.length) return out;
     onStatus?.(label);
-    const r = await fetch('/api/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines: idx.map((i) => lines[i]) }) });
+    let r;
+    try {
+      r = await fetch('/api/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines: idx.map((i) => lines[i]) }), signal });
+    } catch (e) { if (e.name === 'AbortError') throw new Error(STOPPED); throw e; }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `สร้างเสียงพากย์ไม่สำเร็จ (${r.status})`);
     const bufs = await Promise.all(data.files.map((u) => decode(ac, u)));
@@ -418,7 +425,8 @@ window.ReelRender = (() => {
 
   // ตัวอัด: แทร็กเสียงเงียบ (Reels ต้องมีเสียง) + captureStream + MediaRecorder + ลูปวาดตามเวลาจริง → { blob, mime }
   // เรียกหลังตั้งเวลาเสียงทั้งหมดไว้ที่ ta = ac.currentTime + lead แล้ว; draw(t) วาดเฟรม ณ วินาทีที่ t; ปิด AudioContext ให้เมื่อจบ
-  async function record({ ac, dest, canvas, mime, total, lead, draw, onProgress, onStop }) {
+  async function record({ ac, dest, canvas, mime, total, lead, draw, onProgress, onStop, signal }) {
+    if (signal?.aborted) { closeAc(ac); throw new Error(STOPPED); }
     const osc = ac.createOscillator(), silent = ac.createGain();
     silent.gain.value = 0;
     osc.connect(silent).connect(dest);
@@ -433,21 +441,26 @@ window.ReelRender = (() => {
     draw(0);
     rec.start(1000);
     const t0 = performance.now() + lead * 1000;
+    let aborted = false;
     await new Promise((resolve) => {
       const timer = setInterval(() => {
+        if (signal?.aborted) { aborted = true; clearInterval(timer); resolve(); return; } // กดหยุดกลางคัน: ปิดตัวอัดแล้วทิ้งผล
         const t = Math.max(0, (performance.now() - t0) / 1000);
         if (t >= total) { clearInterval(timer); resolve(); return; }
         draw(t);
         onProgress?.(t / total);
       }, 1000 / FPS);
     });
-    draw(total - 0.001);
-    await new Promise((r) => setTimeout(r, 250));
+    if (!aborted) {
+      draw(total - 0.001);
+      await new Promise((r) => setTimeout(r, 250));
+    }
     onStop?.();
     rec.stop();
     await stopped;
     osc.stop();
     ac.close();
+    if (aborted) throw new Error(STOPPED);
     const type = mime.split(';')[0];
     return { blob: new Blob(chunks, { type }), mime: type };
   }
@@ -478,7 +491,7 @@ window.ReelRender = (() => {
     // เสียงพากย์: ขอ WAV ต่อฉากจากเซิร์ฟเวอร์ แล้วขยายความยาวฉากให้พอดีกับเสียง
     let voices = [];
     if (opts.voice) {
-      try { voices = await ttsBuffers(ac, scenes.map((s) => s.say), opts.onStatus, 'กำลังสร้างเสียงพากย์…'); } catch (e) { closeAc(ac); throw e; }
+      try { voices = await ttsBuffers(ac, scenes.map((s) => s.say), opts.onStatus, 'กำลังสร้างเสียงพากย์…', opts.signal); } catch (e) { closeAc(ac); throw e; }
       voices.forEach((v, i) => { if (v) scenes[i].dur = Math.max(scenes[i].dur, v.duration + VOICE_LEAD + VOICE_TAIL); });
     }
     // ความยาวเป้าหมาย: ยืด/หดเวลาต่อฉากให้ใกล้เป้า (ฉากที่มีเสียงพากย์หดต่ำกว่าความยาวเสียงไม่ได้)
@@ -532,7 +545,7 @@ window.ReelRender = (() => {
     }
 
     const out = await record({
-      ac, dest, canvas, mime, total, lead: 0.2, onProgress: opts.onProgress,
+      ac, dest, canvas, mime, total, lead: 0.2, onProgress: opts.onProgress, signal: opts.signal,
       draw: (t) => drawFrame(ctx, scenes, theme, t, starSets, logoImg, photos, badge),
     });
 
@@ -572,6 +585,7 @@ window.ReelRender = (() => {
       v.src = s.url;
     })));
     for (const [i, v] of vids.entries()) if (!(v.duration > 0.2 && Number.isFinite(v.duration))) throw new Error(`คลิปของช็อตที่ ${i + 1} ไม่มีความยาว (ไฟล์เสีย?)`);
+    checkStop(opts.signal); // โหลดหลายคลิปใช้เวลา — กดหยุดระหว่างนี้ไม่ต้องไปต่อ
 
     const ac = new AudioContext({ sampleRate: 48000 });
     await ac.resume();
@@ -580,7 +594,7 @@ window.ReelRender = (() => {
     // เสียงบรรยาย: ขอ WAV ต่อช็อตที่มีข้อความ แล้วยืดช่วงของช็อตให้พอดีกับเสียง (ไม่ตัดเสียง)
     let voices = shots.map(() => null);
     if (opts.voice) {
-      try { voices = await ttsBuffers(ac, shots.map((s) => s.narration || ''), opts.onStatus, 'กำลังสร้างเสียงบรรยาย…'); } catch (e) { closeAc(ac); throw e; }
+      try { voices = await ttsBuffers(ac, shots.map((s) => s.narration || ''), opts.onStatus, 'กำลังสร้างเสียงบรรยาย…', opts.signal); } catch (e) { closeAc(ac); throw e; }
     }
     // ภาพนิ่งที่มีเสียง: ยาวเท่าเสียง (ไม่ใช่ค่าสำรองของช็อต) ; คลิป: ยาวอย่างน้อยเท่าคลิป
     const segs = shots.map((s, i) => ({ dur: isStill[i] && voices[i] ? voices[i].duration + VOICE_LEAD + VOICE_TAIL : Math.max(vids[i].duration, voices[i] ? voices[i].duration + VOICE_LEAD + VOICE_TAIL : 0) }));
@@ -648,7 +662,7 @@ window.ReelRender = (() => {
 
     opts.onStatus?.('กำลังรวมคลิป…');
     const out = await record({
-      ac, dest, canvas, mime, total, lead: 0.3, draw, onProgress: opts.onProgress,
+      ac, dest, canvas, mime, total, lead: 0.3, draw, onProgress: opts.onProgress, signal: opts.signal,
       onStop: () => vids.forEach((v) => v.pause()),
     });
 

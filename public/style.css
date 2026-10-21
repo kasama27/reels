@@ -404,6 +404,12 @@ dialog#story { width: min(1080px, calc(100vw - 24px)); }
 .st-map-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto minmax(0, 1.4fr); align-items: center; gap: 10px; }
 .st-map-row img, .st-map-ph { width: 56px; height: 72px; object-fit: cover; border-radius: 6px; background: #000; display: grid; place-items: center; }
 .st-map-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+/* จอแคบ: รูป + ชื่อไฟล์ แถวบน, ตัวเลือกช็อตเต็มความกว้างแถวล่าง */
+@media (max-width: 560px) {
+  .st-map-row { grid-template-columns: 56px minmax(0, 1fr); }
+  .st-map-row > span:nth-of-type(2) { display: none; }
+  .st-map-row select { grid-column: 1 / -1; }
+}
 .st-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; }
 .st-steps ol { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 0; padding: 0; flex: 1 1 320px; font-size: 13px; color: var(--muted, #9aa); }
 .st-steps li.done { color: #7be0a0; }
