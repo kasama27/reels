@@ -98,6 +98,7 @@
     const media = h('select', {}, new Option('🎬 วิดีโอสั้นต่อช็อต', 'video'), new Option('🖼 ภาพนิ่งต่อช็อต', 'image'));
     media.value = p.media || 'video';
     const gen = genSelect(p);
+    const perImg = perSelect(p);
     const style = h('textarea', { rows: 2, value: p.style, placeholder: 'ว่าง = ใช้โทนภาพของ “สไตล์ประจำเพจ” ในตั้งค่า (อังกฤษ)' });
     const est = h('p', { class: 'hint' });
     const estText = () => `แบ่งได้ประมาณ ${Math.max(1, Math.ceil(cur.project.total_sec / cur.project.shot_sec))} ช็อต (${fmtSec(cur.project.total_sec)} ÷ ช็อตละ ${cur.project.shot_sec} วิ)${cur.project.media === 'image' ? '' : ' — โมเดลวิดีโอส่วนใหญ่สร้างได้ครั้งละประมาณ 10 วินาที'}`;
@@ -129,6 +130,7 @@
         h('div', { class: 'st-grid2' },
           field('รูปแบบของแต่ละช็อต', media, p.media === 'image' ? 'สร้างรูปเองทีละช็อต (ไม่ใช้ภาพต้นฉบับของใคร) แล้วซูม/แพนให้ขยับตอนรวมคลิป' : 'สร้างคลิปสั้นทีละช็อตด้วย AI วิดีโอ แล้วต่อกันเป็นคลิปเดียว'),
           field(`ไปสร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ไหน`, gen, 'กำหนดคำแนะนำและลิงก์ในแท็บช็อต')),
+        ...(p.media === 'image' ? [field('สร้างกี่ช็อตต่อ 1 รูป', perImg, 'หลายช็อตในรูปเดียว = ตัวละครเหมือนกันทุกช็อตและส่งน้อยครั้งกว่า แต่ภาพแต่ละช็อตเล็กลง — แท็บช็อตจะแตก prompt เป็นตารางและตัดรูปแบ่งเข้าช็อตให้')] : []),
         h('div', { class: 'st-row' }, field('ความยาวรวม (วินาที)', total), field('ความยาวต่อช็อต (วินาที)', shot), field('อัตราส่วน', aspect)),
         est),
       acc('look', '🎨 โทนภาพ (คุมทุกช็อตให้เหมือนกัน)', sm.look, true, lookBox(style)),
@@ -145,7 +147,7 @@
     const lookName = (cur.looks || []).find((x) => x.ref && x.ref === look.ref)?.label.replace(/\s*\(.*$/, '') || (look.ref || look.light || look.film ? 'กำหนดเอง' : 'ยังไม่ตั้ง');
     return {
       story: p.premise.trim() ? `${p.premise.trim().length.toLocaleString('en-US')} ตัวอักษร` : 'ยังว่าง — วางเนื้อเรื่องที่นี่',
-      prod: `${p.media === 'image' ? '🖼 ภาพนิ่ง' : '🎬 วิดีโอ'} · ${genOf(p).name.replace(/\s*\(.*$/, '')} · ${fmtSec(p.total_sec)} · ${p.aspect}`,
+      prod: `${p.media === 'image' ? `🖼 ภาพนิ่ง${p.per_image > 1 ? ` (${p.per_image} ช็อต/รูป)` : ''}` : '🎬 วิดีโอ'} · ${genOf(p).name.replace(/\s*\(.*$/, '')} · ${fmtSec(p.total_sec)} · ${p.aspect}`,
       look: `โทน: ${lookName}`,
       src: srcN ? `${srcN} แหล่ง` : 'ยังไม่มี',
     };
@@ -221,25 +223,35 @@
   }
 
   // ---------- หลายช็อตในรูปเดียว (โหมดภาพนิ่ง): prompt ตาราง 4/12 ช่อง → แนบรูปตาราง → ตัดแบ่งเข้าช็อต ----------
-  const sheetUi = { open: false, per: 4 }; // จำไว้ข้ามการวาดหน้าใหม่
+  // ค่าที่เลือกเก็บในโปรเจกต์ (per_image) ตั้งได้ทั้งในแท็บเรื่อง → การผลิต และในแท็บช็อต; 1 = ทีละช็อต (ปิดกรอบนี้ไว้)
+  function perSelect(p) {
+    const sel = h('select', {}, new Option('1 ช็อต/รูป (ทีละช็อต — คมสุด)', '1'), new Option('4 ช็อต/รูป (ตาราง 2×2)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
+    sel.setAttribute('aria-label', 'จำนวนช็อตต่อรูป');
+    sel.value = String(p.per_image || 1);
+    sel.addEventListener('change', () => save('PATCH', `/api/story/projects/${p.id}`, { per_image: Number(sel.value) }));
+    return sel;
+  }
   function sheetBox() {
     const p = cur.project;
     const box = h('section', { class: 'st-merged', hidden: true });
     const btn = h('button', { class: 'btn', type: 'button', textContent: '🧩 หลายช็อตในรูปเดียว' });
-    const per = h('select', { 'aria-label': 'จำนวนช็อตต่อรูป' }, new Option('4 ช็อต/รูป (ตาราง 2×2 — คมกว่า)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
-    per.value = String(sheetUi.per);
+    const per = h('select', {}, new Option('4 ช็อต/รูป (ตาราง 2×2 — คมกว่า)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
+    per.setAttribute('aria-label', 'จำนวนช็อตต่อรูป');
+    per.value = p.per_image === 12 ? '12' : '4';
     const list = h('div', { class: 'st-merged-list' });
     const load = () => guard(btn, async () => {
-      sheetUi.per = Number(per.value);
-      const gs = await api('GET', `/api/story/projects/${p.id}/sheet?per=${sheetUi.per}`);
+      const gs = await api('GET', `/api/story/projects/${p.id}/sheet?per=${per.value}`);
       list.replaceChildren(...(gs.length ? gs.map(sheetGroup) : [h('p', { class: 'muted', textContent: 'ยังไม่มีช็อต' })]));
-      box.hidden = false; sheetUi.open = true;
+      box.hidden = false;
     }, (e) => toast(e.message, true));
-    btn.addEventListener('click', () => (box.hidden ? load() : (box.hidden = true, sheetUi.open = false)));
-    per.addEventListener('change', load);
+    // ปิดกรอบ = กลับไปทำทีละช็อต (บันทึก per_image = 1), เปิด = ใช้จำนวนที่เลือก
+    btn.addEventListener('click', async () => {
+      if (box.hidden) { await save('PATCH', `/api/story/projects/${p.id}`, { per_image: Number(per.value) }); load(); } else { box.hidden = true; save('PATCH', `/api/story/projects/${p.id}`, { per_image: 1 }); }
+    });
+    per.addEventListener('change', async () => { await save('PATCH', `/api/story/projects/${p.id}`, { per_image: Number(per.value) }); load(); });
     box.append(h('p', { class: 'hint', textContent: `ให้ ${genOf(p).short} วาดหลายช็อตเป็นตารางในรูปเดียว — ตัวละครหน้าตาเหมือนกันทุกช่องและส่งน้อยครั้งกว่า แต่แต่ละช็อตได้ภาพเล็กลง (4 ช่อง ≈ ครึ่งหนึ่งของรูปเต็ม, 12 ช่อง ≈ หนึ่งในสี่ อาจแตกตอนเต็มจอ) คัดลอก prompt ไปวาง แล้วแนบรูปตารางที่ได้ ระบบจะตัดเป็นช่องและแนบเข้าช็อตให้` }),
       h('div', { class: 'row' }, h('span', { class: 'cap-label', textContent: 'จำนวนช็อตต่อรูป' }), per), list);
-    if (sheetUi.open) load();
+    if (p.per_image > 1) load();
     return h('div', {}, btn, box);
   }
   function sheetGroup(g) {

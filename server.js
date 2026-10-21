@@ -502,6 +502,10 @@ function storyProjectBody(b, partial = false) {
     if (!Number.isInteger(n) || n < lo || n > hi) throw new HttpError(400, `${k} ต้องเป็นจำนวนเต็ม ${lo}–${hi}`);
     out[k] = n;
   }
+  if (b.per_image !== undefined) {
+    if (!story.PER_IMAGE.includes(Number(b.per_image))) throw new HttpError(400, 'per_image ต้องเป็น 1, 4 หรือ 12');
+    out.per_image = Number(b.per_image);
+  }
   if (b.aspect !== undefined) {
     if (!story.ASPECTS.includes(b.aspect)) throw new HttpError(400, 'aspect ไม่รู้จัก');
     out.aspect = b.aspect;
