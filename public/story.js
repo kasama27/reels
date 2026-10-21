@@ -305,17 +305,55 @@
       h('div', { class: 'row' }, pick, input), stage);
   }
   // ตัดรูปตารางเป็นช่องเท่าๆ กัน (เผื่อขอบ ~2% ต่อด้านกันเส้นคั่นสีขาวติดมา) → โชว์ตัวอย่างว่าช่องไหนเข้าช็อตไหน → กดยืนยันแล้วค่อยอัปโหลด
+  // หาเส้นคั่นจริงในรูปตาราง: เว็บวาดช่องไม่เท่ากันเป๊ะ (ขอบนอก/เส้นคั่นหนาไม่เท่ากัน) — ตัดเท่า ๆ กันแล้วช่องจะติดเศษช่องข้าง ๆ มา
+  // เส้นคั่น = แถว/คอลัมน์ที่เกือบทั้งเส้นเป็นสีขาว (หรือดำ) ล้วน; ส่วนที่เหลือคือเนื้อภาพ → ต้องได้จำนวนช่วงตรงกับตาราง
+  // ถ้าหาไม่ได้ (ไม่มีเส้นคั่นชัด ๆ) ตัดเท่า ๆ กันภายในกรอบเนื้อภาพแทน
+  function gridCuts(bmp, nc, nr) {
+    const W = bmp.width, H = bmp.height;
+    const c = h('canvas', { width: W, height: H });
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0);
+    const px = ctx.getImageData(0, 0, W, H).data;
+    const plain = (vertical, i) => { // เส้นที่ i เป็นสีเรียบ (ขาว/ดำ) แทบทั้งเส้นไหม
+      const len = vertical ? H : W;
+      let light = 0, dark = 0, n = 0;
+      for (let j = 0; j < len; j += 2) {
+        const k = ((vertical ? j * W + i : i * W + j)) * 4;
+        const lo = Math.min(px[k], px[k + 1], px[k + 2]), hi = Math.max(px[k], px[k + 1], px[k + 2]);
+        if (lo > 215) light++; else if (hi < 35) dark++;
+        n++;
+      }
+      return light / n >= 0.92 || dark / n >= 0.92;
+    };
+    const split = (vertical, n) => {
+      const len = vertical ? W : H;
+      const runs = [];
+      let start = -1;
+      for (let i = 0; i <= len; i++) {
+        const content = i < len && !plain(vertical, i);
+        if (content && start < 0) start = i;
+        if (!content && start >= 0) { runs.push({ a: start, b: i }); start = -1; }
+      }
+      const big = runs.filter((r) => r.b - r.a >= (len / n) * 0.35); // ตัดเส้นสีเรียบในเนื้อภาพเอง (ช่วงสั้น ๆ) ทิ้ง
+      if (big.length === n) return { segs: big, ok: true };
+      const a = runs[0]?.a ?? 0, b = runs[runs.length - 1]?.b ?? len; // ไม่ตรง → แบ่งเท่า ๆ กันในกรอบเนื้อภาพ
+      const step = (b - a) / n;
+      return { segs: Array.from({ length: n }, (_, k) => ({ a: Math.round(a + k * step), b: Math.round(a + (k + 1) * step) })), ok: false };
+    };
+    const x = split(true, nc), y = split(false, nr);
+    return { cols: x.segs, rows: y.segs, found: x.ok && y.ok };
+  }
   async function sliceSheet(file, g, stage) {
     if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('รองรับเฉพาะรูป .png .jpg .webp');
     const bmp = await createImageBitmap(file);
-    const cw = bmp.width / g.cols, ch = bmp.height / g.rows;
-    const ix = Math.round(cw * 0.02), iy = Math.round(ch * 0.02);
+    const { cols, rows, found } = gridCuts(bmp, g.cols, g.rows);
     const pieces = [];
     for (let i = 0; i < g.shots.length; i++) {
-      const x = (i % g.cols) * cw, y = Math.floor(i / g.cols) * ch;
-      const w = Math.floor(cw - ix * 2), hh = Math.floor(ch - iy * 2);
+      const cx = cols[i % g.cols], cy = rows[Math.floor(i / g.cols)];
+      const ix = Math.round((cx.b - cx.a) * 0.01), iy = Math.round((cy.b - cy.a) * 0.01); // เผื่อขอบเบลอของเส้นคั่น
+      const w = cx.b - cx.a - ix * 2, hh = cy.b - cy.a - iy * 2;
       const c = h('canvas', { width: w, height: hh });
-      c.getContext('2d').drawImage(bmp, Math.round(x + ix), Math.round(y + iy), w, hh, 0, 0, w, hh);
+      c.getContext('2d').drawImage(bmp, cx.a + ix, cy.a + iy, w, hh, 0, 0, w, hh);
       pieces.push({ shot: g.shots[i], blob: await new Promise((r) => c.toBlob(r, 'image/png')), url: c.toDataURL('image/jpeg', 0.7), w, h: hh });
     }
     bmp.close();
@@ -338,7 +376,7 @@
     }, (e) => toast(e.message, true)));
     const small = pieces[0].w < 400 ? ' — ช่องเล็ก อาจไม่คมตอนเต็มจอ' : '';
     stage.replaceChildren(
-      h('p', { class: 'hint', textContent: `ตัดได้ ${pieces.length} ช่อง ช่องละ ${pieces[0].w}×${pieces[0].h} พิกเซล${small} — ตรวจว่าช่องตรงช็อตก่อนกดแนบ` }),
+      h('p', { class: 'hint', textContent: `${found ? 'ตัดตามเส้นคั่นที่พบในรูป' : 'ไม่พบเส้นคั่นชัด ๆ — ตัดเป็นช่องเท่า ๆ กัน'} ได้ ${pieces.length} ช่อง ช่องละประมาณ ${pieces[0].w}×${pieces[0].h} พิกเซล${small} — ตรวจว่าแต่ละช่องไม่มีเศษช่องข้าง ๆ ติดมา และตรงช็อตก่อนกดแนบ` }),
       h('div', { class: 'st-sheet-grid' }, ...pieces.map((x) => h('figure', {},
         h('img', { src: x.url, alt: `ช็อต ${x.shot.position}` }),
         h('figcaption', { textContent: `ช็อต ${x.shot.position}${x.shot.has ? ' · แทนรูปเดิม' : ''}` })))),
