@@ -20,6 +20,7 @@ const TASK_LABELS = [
   [/^\/api\/knowledge$/, 'AI กำลังค้นความรู้จากเว็บ', 'AI กำลังค้น'],
   [/^\/api\/story\/projects\/\d+\/ai-bible$/, 'AI กำลังร่างตัวละคร/สถานที่', 'AI กำลังร่าง'],
   [/^\/api\/story\/projects\/\d+\/ai-shots$/, 'AI กำลังแบ่งช็อต', 'AI กำลังแบ่งช็อต'],
+  [/^\/api\/story\/projects\/\d+\/ai-narration$/, 'AI กำลังเขียนคำบรรยาย', 'AI กำลังเขียนคำบรรยาย'],
   [/^\/api\/images\/auto$/, 'กำลังดึงรูปจากที่มา', 'กำลังดึงรูป'],
   [/^\/api\/images\/(search|pick)$/, 'กำลังดึงรูปจากเว็บ', 'กำลังดึงรูป'],
   [/^\/api\/extract$/, 'AI กำลังอ่านรูป', 'AI กำลังอ่านรูป'],

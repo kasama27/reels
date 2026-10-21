@@ -127,6 +127,13 @@
     media.value = p.media || 'video';
     const gen = genSelect(p);
     const perImg = perSelect(p);
+    // สไตล์คำบรรยาย: ใช้ตอน AI แบ่งช็อต/เขียนคำบรรยาย และน้ำเสียงตอนอ่าน (Gemini) — เปลี่ยนแล้วเสนอเขียนคำบรรยายเดิมใหม่ทันที
+    const tone = h('select', {}, ...(cur.tones || []).map((t) => new Option(t.label, t.id)));
+    tone.value = p.narr_tone || 'plain';
+    tone.addEventListener('change', () => guard(tone, async () => {
+      if (!(await save('PATCH', `/api/story/projects/${p.id}`, { narr_tone: tone.value }))) return;
+      if (cur.shots.length && await uiConfirm(`เขียนคำบรรยายทั้ง ${cur.shots.length} ช็อตใหม่แบบ “${toneName()}” เลยไหม? (รูปและ prompt ไม่เปลี่ยน)`, { title: 'สไตล์คำบรรยาย', ok: 'เขียนใหม่เลย' })) await rewriteNarration();
+    }, (e) => toast(e.message, true)));
     const style = h('textarea', { rows: 2, value: p.style, placeholder: 'ว่าง = ใช้โทนภาพของ “สไตล์ประจำเพจ” ในตั้งค่า (อังกฤษ)' });
     const est = h('p', { class: 'hint' });
     const estText = () => `แบ่งได้ประมาณ ${Math.max(1, Math.ceil(cur.project.total_sec / cur.project.shot_sec))} ช็อต (${fmtSec(cur.project.total_sec)} ÷ ช็อตละ ${cur.project.shot_sec} วิ)${cur.project.media === 'image' ? '' : ' — โมเดลวิดีโอส่วนใหญ่สร้างได้ครั้งละประมาณ 10 วินาที'}`;
@@ -157,6 +164,7 @@
           field('รูปแบบของแต่ละช็อต', media, p.media === 'image' ? 'สร้างรูปเองทีละช็อต (ไม่ใช้ภาพต้นฉบับของใคร) แล้วซูม/แพนให้ขยับตอนรวมคลิป' : 'สร้างคลิปสั้นทีละช็อตด้วย AI วิดีโอ แล้วต่อกันเป็นคลิปเดียว'),
           field(`ไปสร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ไหน`, gen, 'กำหนดคำแนะนำและลิงก์ในแท็บช็อต')),
         ...(p.media === 'image' ? [field('สร้างกี่ช็อตต่อ 1 รูป', perImg, 'หลายช็อตในรูปเดียว = ตัวละครเหมือนกันทุกช็อตและส่งน้อยครั้งกว่า แต่ภาพแต่ละช็อตเล็กลง — แท็บช็อตจะแตก prompt เป็นตารางและตัดรูปแบ่งเข้าช็อตให้')] : []),
+        field('สไตล์คำบรรยาย / น้ำเสียงพากย์', tone, status.ttsProvider === 'gemini' ? 'ใช้ตอน AI เขียนคำบรรยาย และกำกับน้ำเสียงตอนอ่าน' : 'ใช้ตอน AI เขียนคำบรรยาย (น้ำเสียงตามสไตล์ได้เฉพาะเสียง Gemini — ตั้งค่า → เสียงพากย์)'),
         h('div', { class: 'st-row' }, field('ความยาวรวม (วินาที)', total), field('ความยาวต่อช็อต (วินาที)', shot), field('อัตราส่วน', aspect)),
         est),
       acc('story', '📖 เนื้อเรื่อง', sm.story, true,
@@ -511,10 +519,24 @@
     return h('div', { class: 'st-card' }, h('div', { class: 'st-row2' }, name, alias, del), desc, notes);
   }
 
+  // เขียนคำบรรยายใหม่ทุกช็อตตามสไตล์ของโปรเจกต์ — แก้แค่ narration (รูป/prompt คงเดิม) แล้ววาดเฉพาะการ์ดช็อต (ภาพตัวอย่างตารางที่ยังไม่แนบไม่หาย)
+  const toneName = () => (cur.tones || []).find((t) => t.id === cur.project.narr_tone)?.label || 'เล่าเรื่องธรรมดา';
+  async function rewriteNarration() {
+    cur = await api('POST', `/api/story/projects/${cur.project.id}/ai-narration`, {});
+    if (tab === 'shots') cur.shots.forEach((s) => refreshCard(s.id)); else render();
+    toast(`เขียนคำบรรยายใหม่แล้ว (${toneName()}) — ดู/แก้ได้ที่การ์ดช็อต`);
+  }
+
   // ---------- แท็บ: ช็อต ----------
   function viewShots() {
     const p = cur.project;
     const planned = cur.planned;
+    const narr = h('button', { class: 'btn', type: 'button', textContent: '🎙 เขียนคำบรรยายใหม่', title: `ตามสไตล์ “${toneName()}” (เปลี่ยนสไตล์ได้ที่แท็บเรื่อง → แบบงาน) — รูปและ prompt ไม่เปลี่ยน` });
+    narr.addEventListener('click', () => guard(narr, async () => {
+      if (!cur.shots.length) throw new Error('ยังไม่มีช็อต — แบ่งช็อตก่อน');
+      if (cur.shots.some((s) => s.narration.trim()) && !(await uiConfirm(`เขียนคำบรรยายใหม่ทุกช็อตแบบ “${toneName()}” — ทับคำบรรยายเดิม (รูปและ prompt ไม่เปลี่ยน)?`, { title: 'เขียนคำบรรยายใหม่', ok: 'เขียนใหม่' }))) return;
+      await rewriteNarration();
+    }, (e) => toast(e.message, true)));
     const ai = h('button', { class: 'btn primary', type: 'button', textContent: cur.shots.length ? `↻ ให้ AI แบ่งช็อตใหม่ (${planned} ช็อต)` : `✨ ให้ AI แบ่งช็อต (${planned} ช็อต)` });
     ai.addEventListener('click', () => guard(ai, async () => {
       if (!p.premise.trim()) throw new Error('ใส่เรื่องย่อก่อน (แท็บ “เรื่อง”)');
@@ -590,7 +612,7 @@
     const done = cur.shots.filter((s) => s.status === 'generated' || s.status === 'approved').length;
     const totalSec = cur.shots.reduce((a, s) => a + s.duration, 0);
     const wrap = h('div', { class: 'st-pane' },
-      h('div', { class: 'row' }, ai, rebuild, copyAll, manyBtn, many, add),
+      h('div', { class: 'row' }, ai, narr, rebuild, copyAll, manyBtn, many, add),
       genPicker(),
       p.media === 'image' ? sheetBox() : mergedBox(),
       stage,
@@ -652,7 +674,7 @@
     try {
       const th = status.themes.find((t) => t.id === status.brand?.theme) || status.themes[0];
       const r = await ReelRender.assemble(shots.map((s) => ({ url: `/story-media/${s.video_file}`, narration: s.narration, duration: s.duration })), {
-        ...o, canvas, aspect: p.aspect, theme: th, signal: ctrl.signal,
+        ...o, canvas, aspect: p.aspect, theme: th, signal: ctrl.signal, tone: p.narr_tone,
         onProgress: (x) => task.set(tid, 0.1 + x * 0.82, `กำลังรวมคลิป “${p.title}”`),
         onStatus: (t) => task.set(tid, /เสียง/.test(t) ? 0.06 : 0.04, t),
       });

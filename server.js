@@ -502,6 +502,10 @@ function storyProjectBody(b, partial = false) {
     if (!Number.isInteger(n) || n < lo || n > hi) throw new HttpError(400, `${k} ต้องเป็นจำนวนเต็ม ${lo}–${hi}`);
     out[k] = n;
   }
+  if (b.narr_tone !== undefined) {
+    if (!story.NARR_TONES[b.narr_tone]) throw new HttpError(400, 'narr_tone ไม่รู้จัก');
+    out.narr_tone = b.narr_tone;
+  }
   if (b.per_image !== undefined) {
     if (!story.PER_IMAGE.includes(Number(b.per_image))) throw new HttpError(400, 'per_image ต้องเป็น 1, 4 หรือ 12');
     out.per_image = Number(b.per_image);
@@ -607,7 +611,7 @@ const routes = [
     if (story.listShots(p.id).length && b.replace !== true) throw new HttpError(409, 'มีช็อตอยู่แล้ว — ยืนยันเพื่อเขียนทับ');
     const total = story.planCount(p);
     if (total > 80) throw new HttpError(400, `จะได้ ${total} ช็อต เกิน 80 — เพิ่มความยาวต่อช็อตหรือลดความยาวรวม`);
-    const planned = await ai.planShots({ title: p.title, premise: p.premise, entities: ents, shotSec: p.shot_sec, total });
+    const planned = await ai.planShots({ title: p.title, premise: p.premise, entities: ents, shotSec: p.shot_sec, total, tone: story.NARR_TONES[p.narr_tone]?.write });
     const id = (kind, name) => ents.find((e) => e.kind === kind && e.name.trim().toLowerCase() === String(name).trim().toLowerCase())?.id;
     story.videoFiles(p.id).forEach(rmStoryVideo); // แบ่งช็อตใหม่ = ช็อตเดิมหาย คลิปที่แนบไว้ก็ไม่มีที่อ้างถึงแล้ว
     story.clearShots(p.id);
@@ -621,6 +625,15 @@ const routes = [
       prevState = s.state_after;
     }
     story.rebuildPrompts(p.id);
+    return story.getProject(p.id);
+  }],
+  // เขียนคำบรรยายใหม่ทุกช็อตตามสไตล์ของโปรเจกต์ — แก้แค่ narration (ช็อต/prompt/รูปที่แนบไว้คงเดิม)
+  ['POST', /^\/api\/story\/projects\/(\d+)\/ai-narration$/, async (req, m) => {
+    const p = mustProject(+m[1]);
+    const shots = story.listShots(p.id);
+    if (!shots.length) throw new HttpError(400, 'ยังไม่มีช็อต — แบ่งช็อตก่อน');
+    const lines = await ai.writeNarration({ title: p.title, premise: p.premise, shots, shotSec: p.shot_sec, tone: story.NARR_TONES[p.narr_tone]?.write });
+    shots.forEach((s, i) => story.updateShot(s.id, { narration: lines[i] }));
     return story.getProject(p.id);
   }],
   // ช็อต
@@ -746,11 +759,12 @@ const routes = [
   })],
   // ข้อความต่อฉาก → WAV เสียงไทย (แคชตามข้อความ); คืนลิงก์ /tts/<hash>.wav ตามลำดับเดิม
   ['POST', /^\/api\/tts$/, async (req) => {
-    const { lines } = await readBody(req);
+    const { lines, tone } = await readBody(req);
     if (!Array.isArray(lines) || !lines.length || lines.length > 30 || lines.some((l) => typeof l !== 'string')) {
       throw new HttpError(400, 'lines ต้องเป็นอาร์เรย์ข้อความ 1–30 บรรทัด');
     }
-    return { files: (await tts.synthesize(lines)).map((n) => `/tts/${n}`) };
+    // tone = สไตล์คำบรรยายของโปรเจกต์เรื่อง → น้ำเสียงตอนอ่าน (เฉพาะ Gemini TTS ที่กำกับด้วยข้อความได้)
+    return { files: (await tts.synthesize(lines, story.NARR_TONES[tone]?.speak || '')).map((n) => `/tts/${n}`) };
   }],
   // รูปอินโฟกราฟิก (data URL) → ชื่อ + เนื้อหา + สคริปต์ฉาก — ไม่บันทึกอะไรลง DB
   // ค้นความรู้จากคีย์เวิร์ด (ค้นเว็บ + แหล่งอ้างอิง) → ชื่อ เนื้อหา สคริปต์ แหล่งที่มา

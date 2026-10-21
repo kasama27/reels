@@ -364,14 +364,14 @@ window.ReelRender = (() => {
   const STOPPED = 'หยุดแล้ว';
   const checkStop = (signal) => { if (signal?.aborted) throw new Error(STOPPED); };
 
-  async function ttsBuffers(ac, lines, onStatus, label, signal) {
+  async function ttsBuffers(ac, lines, onStatus, label, signal, tone = '') { // tone: สไตล์คำบรรยายของโปรเจกต์เรื่อง → น้ำเสียง (Gemini)
     const out = lines.map(() => null);
     const idx = lines.map((s, i) => (s && s.trim() ? i : -1)).filter((i) => i >= 0);
     if (!idx.length) return out;
     onStatus?.(label);
     let r;
     try {
-      r = await fetch('/api/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines: idx.map((i) => lines[i]) }), signal });
+      r = await fetch('/api/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lines: idx.map((i) => lines[i]), ...(tone ? { tone } : {}) }), signal });
     } catch (e) { if (e.name === 'AbortError') throw new Error(STOPPED); throw e; }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `สร้างเสียงพากย์ไม่สำเร็จ (${r.status})`);
@@ -594,7 +594,7 @@ window.ReelRender = (() => {
     // เสียงบรรยาย: ขอ WAV ต่อช็อตที่มีข้อความ แล้วยืดช่วงของช็อตให้พอดีกับเสียง (ไม่ตัดเสียง)
     let voices = shots.map(() => null);
     if (opts.voice) {
-      try { voices = await ttsBuffers(ac, shots.map((s) => s.narration || ''), opts.onStatus, 'กำลังสร้างเสียงบรรยาย…', opts.signal); } catch (e) { closeAc(ac); throw e; }
+      try { voices = await ttsBuffers(ac, shots.map((s) => s.narration || ''), opts.onStatus, 'กำลังสร้างเสียงบรรยาย…', opts.signal, opts.tone); } catch (e) { closeAc(ac); throw e; }
     }
     // ภาพนิ่งที่มีเสียง: ยาวเท่าเสียง (ไม่ใช่ค่าสำรองของช็อต) ; คลิป: ยาวอย่างน้อยเท่าคลิป
     const segs = shots.map((s, i) => ({ dur: isStill[i] && voices[i] ? voices[i].duration + VOICE_LEAD + VOICE_TAIL : Math.max(vids[i].duration, voices[i] ? voices[i].duration + VOICE_LEAD + VOICE_TAIL : 0) }));
