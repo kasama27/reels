@@ -64,8 +64,13 @@
       break;
     }
     const { steps, still } = stepState();
-    tab = 'shots'; render();
-    if (!steps[4].ok) {
+    if (tab !== 'shots') { tab = 'shots'; render(); } // อยู่แท็บช็อตแล้วไม่ต้องวาดใหม่ — กันภาพตัวอย่างรูปตารางที่ยังไม่ได้แนบหายไป
+    if (!steps[4].ok && still && p.per_image > 1) { // หลายช็อตในรูปเดียว: ไปที่กรอบตาราง ไม่ใช่การ์ดช็อตทีละใบ
+      const pending = [...$('st-body').querySelectorAll('.st-sheet')].find((s) => !s.hidden); // ตัดรูปแล้วแต่ยังไม่กดแนบ
+      const at = pending?.querySelector('.btn.primary') || $('st-body').querySelector('.st-merged');
+      at?.scrollIntoView({ block: 'center' }); if (pending) at.focus();
+      toast(pending ? 'รูปตัดแล้วแต่ยังไม่ได้แนบ — กด “✓ แนบ” ใต้ภาพตัวอย่าง' : `ต่อไป: คัดลอก prompt ตาราง ไปวางใน ${genOf(p).short} แล้วกด “📎 แนบรูปตาราง”`);
+    } else if (!steps[4].ok) {
       const first = cur.shots.find((s) => !s.video_file || s.status === 'rejected');
       document.getElementById(`st-shot-${first.id}`)?.scrollIntoView({ block: 'start' });
       toast(`ต่อไป: สร้าง${still ? 'รูป' : 'คลิป'}ตาม prompt (กด “คัดลอก prompt ทั้งหมด”) แล้วแนบไฟล์ — แนบหลายไฟล์พร้อมกันได้`);
@@ -376,12 +381,14 @@
     }, (e) => toast(e.message, true)));
     const small = pieces[0].w < 400 ? ' — ช่องเล็ก อาจไม่คมตอนเต็มจอ' : '';
     stage.replaceChildren(
-      h('p', { class: 'hint', textContent: `${found ? 'ตัดตามเส้นคั่นที่พบในรูป' : 'ไม่พบเส้นคั่นชัด ๆ — ตัดเป็นช่องเท่า ๆ กัน'} ได้ ${pieces.length} ช่อง ช่องละประมาณ ${pieces[0].w}×${pieces[0].h} พิกเซล${small} — ตรวจว่าแต่ละช่องไม่มีเศษช่องข้าง ๆ ติดมา และตรงช็อตก่อนกดแนบ` }),
+      h('p', { class: 'st-pending', textContent: `⚠ ยังไม่ได้แนบเข้าช็อต — ตรวจภาพด้านล่าง แล้วกด “✓ แนบ ${pieces.length} ช็อต”` }),
+      h('p', { class: 'hint', textContent: `${found ?'ตัดตามเส้นคั่นที่พบในรูป' : 'ไม่พบเส้นคั่นชัด ๆ — ตัดเป็นช่องเท่า ๆ กัน'} ได้ ${pieces.length} ช่อง ช่องละประมาณ ${pieces[0].w}×${pieces[0].h} พิกเซล${small} — ตรวจว่าแต่ละช่องไม่มีเศษช่องข้าง ๆ ติดมา และตรงช็อตก่อนกดแนบ` }),
       h('div', { class: 'st-sheet-grid' }, ...pieces.map((x) => h('figure', {},
         h('img', { src: x.url, alt: `ช็อต ${x.shot.position}` }),
         h('figcaption', { textContent: `ช็อต ${x.shot.position}${x.shot.has ? ' · แทนรูปเดิม' : ''}` })))),
       h('div', { class: 'row' }, ok, cancel));
     stage.hidden = false;
+    ok.scrollIntoView({ block: 'nearest' }); // ให้เห็นปุ่มแนบเลย ไม่ต้องเลื่อนหา
   }
 
   // ---------- โทนภาพของเรื่อง (ใส่ซ้ำทุก prompt) ----------
@@ -587,7 +594,7 @@
       genPicker(),
       p.media === 'image' ? sheetBox() : mergedBox(),
       stage,
-      h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · สร้างแล้ว ${done}/${cur.shots.length} — วาง prompt ทีละช็อตใน ${genOf(p).short} แล้วแนบ${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ได้เข้าช็อต` : 'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
+      h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · สร้างแล้ว ${done}/${cur.shots.length} — ${p.media === 'image' && p.per_image > 1 ? `คัดลอก prompt ตารางด้านบนไปวางใน ${genOf(p).short} แล้วแนบรูปตาราง → กด “✓ แนบ”` : `วาง prompt ทีละช็อตใน ${genOf(p).short} แล้วแนบ${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ได้เข้าช็อต`}` :'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
     wrap.append(assemblePanel());
     cur.shots.forEach((s, i) => wrap.append(shotCard(s, i)));
     return wrap;
@@ -607,7 +614,15 @@
     const music = h('select', {}); fillMusic(music, 'none');
     const badge = h('input', { placeholder: 'ป้ายมุมคลิป เช่น ตอนที่ 20 (ไม่บังคับ)', maxLength: 40 });
     const go = h('button', { class: 'btn primary', type: 'button' });
-    const upd = () => { const n = calc().length; go.textContent = `🎞 รวมเป็นคลิปเดียว (${n} ช็อต)`; go.disabled = !n; };
+    const why = h('p', { class: 'hint st-why' }); // บอกเหตุผลตอนกดไม่ได้ (ปุ่มจาง ๆ เฉย ๆ ผู้ใช้ไม่รู้ว่าต้องทำอะไร)
+    const upd = () => {
+      const n = calc().length;
+      go.textContent = `🎞 รวมเป็นคลิปเดียว (${n} ช็อต)`; go.disabled = !n;
+      why.hidden = !!n;
+      why.textContent = !cur.shots.length ? 'ยังไม่มีช็อต — แบ่งช็อตก่อน'
+        : p.per_image > 1 && still ? `ยังไม่มีรูปในช็อต — แนบรูปตารางในกรอบ “🧩 หลายช็อตในรูปเดียว” ด้านบน แล้วกด “✓ แนบ” ใต้ภาพตัวอย่าง`
+          : `ยังไม่มี${noun}ในช็อต — แนบ${noun}ที่การ์ดช็อตด้านล่าง (หรือ “แนบ${noun}หลายไฟล์”)`;
+    };
     upd();
     go.addEventListener('click', () => guard(go, async () => {
       const have = calc();
@@ -621,7 +636,7 @@
       h('p', { class: 'hint', textContent: `ต่อ${noun}ของช็อตที่แนบแล้ว (ยกเว้นที่ติด ❌) ตามลำดับ${still ? ' แต่ละรูปซูม/แพนช้า ๆ ' : ' '}เป็นวิดีโอ ${p.aspect} คลิปเดียว บันทึกเข้าคลังคลิป — ใช้เวลาเท่าความยาวคลิป ต้องเปิดหน้านี้ค้างไว้ (กด ✕ หยุด ที่การ์ดความคืบหน้าได้)` }),
       h('div', { class: 'st-opts' }, voiceL, subsL, keepL, logoL),
       h('div', { class: 'st-row' }, field('เพลงประกอบ', music), field('ป้ายบนคลิป', badge)),
-      h('div', { class: 'row' }, go));
+      h('div', { class: 'row' }, go), why);
     panel.updateCount = upd;
     return panel;
   }
@@ -742,6 +757,7 @@
     const i = cur.shots.findIndex((x) => x.id === id);
     if (old && i >= 0) old.replaceWith(shotCard(cur.shots[i], i));
     document.querySelector('#st-body .st-asm')?.updateCount?.();
+    document.querySelector('#st-body .st-steps')?.replaceWith(stepper()); // ขั้น 5 (x/12) และปุ่มขั้นถัดไปตามจำนวนที่แนบแล้ว
   }
 
   async function uploadVideo(shot, file) {

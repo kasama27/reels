@@ -403,6 +403,8 @@ dialog#story { width: min(1080px, calc(100vw - 24px)); }
 .st-merged, .st-merged-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
 .st-merged { margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
 .st-sheet { display: grid; gap: 8px; margin-top: 8px; }
+.st-pending { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; color: #f2c46d; background: color-mix(in srgb, #f2c46d 12%, transparent); border: 1px solid color-mix(in srgb, #f2c46d 45%, transparent); }
+.st-why { margin: 6px 0 0; color: #f2c46d; }
 .st-sheet-grid { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
 .st-sheet-grid figure { margin: 0; }
 .st-sheet-grid img { width: 100%; display: block; border-radius: 6px; border: 1px solid var(--line); }
