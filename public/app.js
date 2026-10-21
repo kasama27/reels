@@ -68,10 +68,29 @@ function overlayHost() { const open = [...document.querySelectorAll('dialog[open
 function liftOverlay(el) { const host = overlayHost(); if (el && el.parentElement !== host) host.append(el); }
 for (const d of document.querySelectorAll('dialog')) d.addEventListener('close', () => { liftOverlay($('task')); liftOverlay($('toast')); });
 
+// งานที่หยุดได้ (มี AbortController): ปุ่มที่กดเริ่มงานกลายเป็นปุ่มหยุด — ชี้/โฟกัสแล้วขึ้น "✕ หยุด" กดแล้วยกเลิก
+// (ปกติ guard ปิดปุ่มไว้กันกดซ้ำ → เปิดให้กดได้ แต่ดักคลิกไว้ก่อนถึงตัวจัดการเดิม จึงไม่เริ่มงานซ้ำ)
+function stopClick(e) {
+  e.preventDefault(); e.stopImmediatePropagation();
+  this._stopCtrl?.abort();
+}
+const repaintBtn = (e) => e.currentTarget._paint?.();
+
 function paintBtn(t) {
   const b = t.btn;
   const tail = t.pct == null ? `${Math.floor((Date.now() - t.t0) / 1000)} วิ` : `${Math.round(t.pct * 100)}%`;
-  const line = `⏳ ${t.short || 'กำลังทำ'} · ${tail}`;
+  let line = `⏳ ${t.short || 'กำลังทำ'} · ${tail}`;
+  const stoppable = !!t.ctrl && !b.dataset.status && b.tagName === 'BUTTON';
+  if (stoppable && !b._stopCtrl) {
+    b._stopCtrl = t.ctrl;
+    b.disabled = false;
+    b.classList.add('stoppable');
+    b.title = 'กดเพื่อหยุดงานนี้';
+    b.addEventListener('click', stopClick, true);
+    for (const ev of ['mouseenter', 'mouseleave', 'focus', 'blur']) b.addEventListener(ev, repaintBtn);
+  }
+  if (!stoppable && b._stopCtrl) unStop(b); // งานถัดไปบนปุ่มเดียวกันหยุดไม่ได้
+  if (stoppable) { b._stopCtrl = t.ctrl; b._paint = () => paintBtn(t); if (b.matches(':hover, :focus-visible')) line = `✕ หยุด · ${tail}`; }
   if (b.dataset.status) { const s = $(b.dataset.status); s.textContent = line; s.hidden = false; } // กล่องวางรูป: แสดงในบรรทัดสถานะของกล่องเอง
   else {
     if (b.dataset.orig === undefined) b.dataset.orig = b.textContent;
@@ -82,11 +101,30 @@ function paintBtn(t) {
   b.style.setProperty('--p', t.pct == null ? '0%' : `${Math.round(t.pct * 100)}%`);
 }
 
+function unStop(b) {
+  delete b._stopCtrl; delete b._paint;
+  b.classList.remove('stoppable');
+  b.removeAttribute('title');
+  b.removeEventListener('click', stopClick, true);
+  for (const ev of ['mouseenter', 'mouseleave', 'focus', 'blur']) b.removeEventListener(ev, repaintBtn);
+  if (busyStack.includes(b)) b.disabled = true; // guard ยังทำขั้นต่อไปอยู่ (เช่น อัปโหลด/รีเฟรช) — กันกดซ้ำเหมือนเดิม
+}
+
 function restoreBtn(b) {
   b.classList.remove('working', 'indet');
   b.style.removeProperty('--p');
+  if (b._stopCtrl) unStop(b);
   if (b.dataset.status) $(b.dataset.status).hidden = true;
   if (b.dataset.orig !== undefined) { b.textContent = b.dataset.orig; delete b.dataset.orig; }
+}
+
+// ปุ่มยังเห็นอยู่บนจอไหม (ไม่ถูกซ่อน/ถูกแทนที่ และอยู่ในกรอบที่มองเห็น — ถ้าอยู่ใน dialog ใช้กรอบของ dialog ที่เลื่อนได้)
+function onScreen(b) {
+  if (!b?.isConnected || !b.getClientRects().length) return false;
+  const r = b.getBoundingClientRect();
+  const box = b.closest('dialog')?.getBoundingClientRect() || { top: 0, left: 0, bottom: innerHeight, right: innerWidth };
+  return r.bottom > box.top + 4 && r.top < box.bottom - 4 && r.right > box.left && r.left < box.right
+    && r.bottom > 0 && r.top < innerHeight;
 }
 
 const task = (() => {
@@ -96,11 +134,14 @@ const task = (() => {
   // ปุ่มหยุดบนการ์ด: ยกเลิกงานที่กำลังแสดงอยู่ (เรียก abort ของ AbortController ที่ผูกกับงานนั้น)
   let shown = null;
   if (stop) stop.addEventListener('click', () => { shown?.ctrl?.abort(); });
+  // เลื่อนหน้า → ปุ่มอาจหลุด/กลับเข้าจอ: วาดการ์ดใหม่ทันที (ไม่รอรอบ 1 วินาที)
+  let raf = 0;
+  document.addEventListener('scroll', () => { if (tasks.size && !raf) raf = requestAnimationFrame(() => { raf = 0; paint(); }); }, { capture: true, passive: true });
   function paint() {
     const all = [...tasks.values()];
     for (const t of all) if (t.btn) paintBtn(t); // ปุ่มที่กดอยู่โชว์ ⏳ + เวลา/% เสมอ
-    // งานที่ยกเลิกได้ ถึงจะเกาะปุ่ม (ปุ่มถูก disable กดไม่ได้) ก็ยกมาโชว์บนการ์ดด้วยเพื่อให้มีปุ่มหยุด
-    const list = all.filter((t) => !t.btn || t.ctrl);
+    // การ์ดมุมซ้ายล่าง: งานที่ไม่มีปุ่ม หรือปุ่มหลุดจอไปแล้ว (เลื่อนหน้า/ปุ่มถูกวาดใหม่) — ถ้ายังเห็นปุ่มอยู่ ปุ่มนั้นเป็นตัวบอกสถานะและปุ่มหยุดเองแล้ว
+    const list = all.filter((t) => !t.btn || !onScreen(t.btn));
     if (!list.length) { el.hidden = true; shown = null; if (!all.length) { clearInterval(timer); timer = null; } return; }
     const t = list[list.length - 1]; // แสดงงานที่เริ่มล่าสุด
     shown = t;

@@ -36,13 +36,16 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-
 .btn:hover:not(:disabled) { border-color: var(--accent); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-/* ปุ่มที่กำลังทำงาน: แถบเติมในปุ่มตาม % (--p) หรือแถบวิ่งเมื่อไม่ทราบ % */
+/* ปุ่มที่กำลังทำงาน: แถบบาง ๆ ที่ขอบล่างของปุ่ม เติมตาม % (--p) หรือวิ่งไปมาเมื่อไม่ทราบ % — ใช้สีตัวอักษรของปุ่มเอง จึงเห็นได้ทั้งปุ่มหลัก (พื้นม่วง) และปุ่มธรรมดา */
 button.btn.working, button.btn.working:disabled { opacity: 1; cursor: progress; white-space: nowrap; border-color: var(--accent);
-  background-image: linear-gradient(90deg, color-mix(in srgb, var(--accent) 45%, transparent) var(--p, 0%), transparent var(--p, 0%)); }
-button.btn.working.indet { background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 55%, transparent), transparent);
-  background-size: 45% 100%; background-repeat: no-repeat; animation: btn-slide 1.2s linear infinite; }
-@keyframes btn-slide { 0% { background-position: -60% 0; } 100% { background-position: 160% 0; } }
-@media (prefers-reduced-motion: reduce) { button.btn.working.indet { animation: none; background-size: 100% 100%; } }
+  background-image: linear-gradient(color-mix(in srgb, currentColor 80%, transparent), color-mix(in srgb, currentColor 80%, transparent));
+  background-repeat: no-repeat; background-position: left bottom; background-size: var(--p, 0%) 3px; transition: background-size .3s; }
+button.btn.working.indet { background-size: 30% 3px; transition: none; animation: btn-slide 1.2s ease-in-out infinite; }
+@keyframes btn-slide { 0% { background-position: -40% 100%; } 100% { background-position: 140% 100%; } }
+@media (prefers-reduced-motion: reduce) { button.btn.working.indet { animation: none; background-size: 100% 3px; } }
+/* งานที่หยุดได้: ชี้/โฟกัสที่ปุ่ม → ข้อความเป็น "✕ หยุด" กดแล้วยกเลิกงาน */
+button.btn.working.stoppable { cursor: pointer; }
+button.btn.working.stoppable:hover, button.btn.working.stoppable:focus-visible { border-color: #e06464; background-color: #7a2a2a; color: #fff; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.ghost { background: transparent; }

@@ -37,7 +37,7 @@
     const have = cur.shots.filter((s) => s.video_file && s.status !== 'rejected').length;
     // ขั้น 1 = แบบงาน (รูป/วิดีโอ + เว็บ) — มีค่าเสมอ แต่ต้องเห็นก่อนเพราะกำหนด prompt ทุกช็อตและเว็บที่ใช้ได้ (กดเพื่อเปลี่ยน)
     const steps = [
-      { k: 'fmt', t: `1 แบบงาน: ${still ? `ภาพนิ่ง${p.per_image > 1 ? ` ${p.per_image} ช็อต/รูป` : ''}` : 'วิดีโอ'} · ${genOf(p).short}`, ok: true, go: gotoFormat },
+      { k: 'fmt', t: `1 ${still ? `ภาพนิ่ง${p.per_image > 1 ? ` ${p.per_image}/รูป` : ''}` : 'วิดีโอ'} · ${genOf(p).short}`, ok: true, go: gotoFormat },
       { k: 'premise', t: '2 วางเนื้อเรื่อง', ok: !!p.premise.trim() },
       { k: 'bible', t: '3 คลังตัวละคร/สถานที่', ok: cur.entities.length > 0 },
       { k: 'shots', t: '4 แบ่งช็อต + prompt', ok: cur.shots.length > 0 },
@@ -72,10 +72,18 @@
       toast('ครบทุกช็อตแล้ว — กด “รวมเป็นคลิปเดียว” ได้เลย');
     }
   }
+  let goBtn = null;
   function stepper() {
     const { steps, now } = stepState();
-    const go = h('button', { class: 'btn primary', type: 'button', textContent: now === 5 ? '▶ ไปขั้นรวมคลิป' : `▶ ทำขั้นถัดไป (${steps[now].t.slice(2)})` });
-    go.addEventListener('click', () => guard(go, runNext, (e) => { $('st-msg').textContent = e.message; toast(e.message, true); }));
+    // ระหว่าง runNext หน้าถูกวาดใหม่หลายรอบ → ใช้ปุ่มเดิมต่อ (คงสถานะ ⏳/หยุดได้ไว้) ไม่สร้างปุ่มใหม่ที่ดูเหมือนว่าง
+    let go = goBtn && busyStack.includes(goBtn) ? goBtn : null;
+    if (!go) {
+      go = goBtn = h('button', { class: 'btn primary', type: 'button', textContent: now === 5 ? '▶ ไปขั้นรวมคลิป' : `▶ ทำขั้นถัดไป (${steps[now].t.slice(2)})` });
+      go.addEventListener('click', async () => {
+        await guard(go, runNext, (e) => { $('st-msg').textContent = e.message; toast(e.message, true); });
+        document.querySelector('#st-body .st-steps')?.replaceWith(stepper()); // จบแล้ว → ปุ่มใหม่บอกขั้นถัดไปที่ถูกต้อง
+      });
+    }
     return h('div', { class: 'st-steps' },
       h('ol', {}, ...steps.map((s, i) => {
         const text = `${s.ok ? '✓ ' : ''}${s.t}${s.note ? ` (${s.note})` : ''}`;
