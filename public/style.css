@@ -420,6 +420,15 @@ dialog#story { width: min(1080px, calc(100vw - 24px)); }
 .st-steps li.done { color: #7be0a0; }
 .st-steps li.now { color: var(--accent); font-weight: 700; }
 .st-steps .btn { white-space: nowrap; min-height: 42px; }
+.st-step-link { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.st-step-link:hover { color: var(--accent); }
+dialog.st-newdlg { width: min(520px, calc(100vw - 24px)); padding: 0; }
+.st-choices { display: grid; gap: 8px; }
+.st-choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.st-choice:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.st-choice input { margin-top: 3px; width: auto; }
+.st-choice span { display: grid; gap: 2px; }
+.st-choice small { color: var(--muted, #9aa); font-size: 12px; line-height: 1.45; }
 .st-video video, .st-video .st-still { width: 100%; max-width: 270px; max-height: 360px; background: #000; border-radius: 8px; justify-self: start; object-fit: contain; }
 .st-asm { border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 12px 14px; display: grid; gap: 10px; background: color-mix(in srgb, var(--accent) 6%, transparent); grid-template-columns: minmax(0, 1fr); }
 .st-asm h3 { font-size: 15px; }

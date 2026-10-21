@@ -35,28 +35,35 @@
   const stepState = () => {
     const p = cur.project, still = p.media === 'image';
     const have = cur.shots.filter((s) => s.video_file && s.status !== 'rejected').length;
+    // ขั้น 1 = แบบงาน (รูป/วิดีโอ + เว็บ) — มีค่าเสมอ แต่ต้องเห็นก่อนเพราะกำหนด prompt ทุกช็อตและเว็บที่ใช้ได้ (กดเพื่อเปลี่ยน)
     const steps = [
-      { k: 'premise', t: '1 วางเนื้อเรื่อง', ok: !!p.premise.trim() },
-      { k: 'bible', t: '2 คลังตัวละคร/สถานที่', ok: cur.entities.length > 0 },
-      { k: 'shots', t: '3 แบ่งช็อต + prompt', ok: cur.shots.length > 0 },
-      { k: 'media', t: `4 ${still ? 'สร้างรูป' : 'สร้างคลิป'}ทุกช็อต`, ok: cur.shots.length > 0 && have === cur.shots.length, note: cur.shots.length ? `${have}/${cur.shots.length}` : '' },
-      { k: 'asm', t: '5 รวมเป็นคลิปเดียว', ok: false },
+      { k: 'fmt', t: `1 แบบงาน: ${still ? `ภาพนิ่ง${p.per_image > 1 ? ` ${p.per_image} ช็อต/รูป` : ''}` : 'วิดีโอ'} · ${genOf(p).short}`, ok: true, go: gotoFormat },
+      { k: 'premise', t: '2 วางเนื้อเรื่อง', ok: !!p.premise.trim() },
+      { k: 'bible', t: '3 คลังตัวละคร/สถานที่', ok: cur.entities.length > 0 },
+      { k: 'shots', t: '4 แบ่งช็อต + prompt', ok: cur.shots.length > 0 },
+      { k: 'media', t: `5 ${still ? 'สร้างรูป' : 'สร้างคลิป'}ทุกช็อต`, ok: cur.shots.length > 0 && have === cur.shots.length, note: cur.shots.length ? `${have}/${cur.shots.length}` : '' },
+      { k: 'asm', t: '6 รวมเป็นคลิปเดียว', ok: false },
     ];
     const cur1 = steps.findIndex((s) => !s.ok);
-    return { steps, now: cur1 < 0 ? 4 : cur1, still };
+    return { steps, now: cur1 < 0 ? 5 : cur1, still };
   };
+  // ไปการ์ด "แบบงาน" ในแท็บเรื่อง (กางไว้ + โฟกัสตัวเลือกรูป/วิดีโอ)
+  function gotoFormat() {
+    tab = 'story'; accOpen.prod = true; render();
+    const m = $('st-media'); m?.scrollIntoView({ block: 'center' }); m?.focus();
+  }
   async function runNext() {
     const p = cur.project;
     for (let guardN = 0; guardN < 4; guardN++) { // ขั้น AI ทำต่อกันให้เอง
       const { steps } = stepState();
-      if (!steps[0].ok) { tab = 'story'; render(); $('st-body').querySelector('textarea')?.focus(); toast('วางเนื้อเรื่องในช่อง “เรื่องย่อ” ก่อน แล้วกดปุ่มนี้อีกครั้ง'); return; }
-      if (!steps[1].ok) { toast('AI กำลังร่างคลังตัวละคร/สถานที่…'); await api('POST', `/api/story/projects/${p.id}/ai-bible`, {}); await loadList(p.id); render(); if (!cur.entities.length) throw new Error('AI ไม่ได้ร่างคลังให้ — ลองอีกครั้ง หรือเพิ่มเองในแท็บ “ตัวละคร/สถานที่”'); continue; }
-      if (!steps[2].ok) { toast('AI กำลังแบ่งช็อตและเขียน prompt…'); await api('POST', `/api/story/projects/${p.id}/ai-shots`, { replace: true }); await loadList(p.id); render(); if (!cur.shots.length) throw new Error('AI ไม่ได้แบ่งช็อตให้ — ลองอีกครั้ง'); continue; }
+      if (!steps[1].ok) { tab = 'story'; render(); $('st-premise')?.focus(); toast('วางเนื้อเรื่องในช่อง “เรื่องย่อ” ก่อน แล้วกดปุ่มนี้อีกครั้ง'); return; }
+      if (!steps[2].ok) { toast('AI กำลังร่างคลังตัวละคร/สถานที่…'); await api('POST', `/api/story/projects/${p.id}/ai-bible`, {}); await loadList(p.id); render(); if (!cur.entities.length) throw new Error('AI ไม่ได้ร่างคลังให้ — ลองอีกครั้ง หรือเพิ่มเองในแท็บ “ตัวละคร/สถานที่”'); continue; }
+      if (!steps[3].ok) { toast('AI กำลังแบ่งช็อตและเขียน prompt…'); await api('POST', `/api/story/projects/${p.id}/ai-shots`, { replace: true }); await loadList(p.id); render(); if (!cur.shots.length) throw new Error('AI ไม่ได้แบ่งช็อตให้ — ลองอีกครั้ง'); continue; }
       break;
     }
     const { steps, still } = stepState();
     tab = 'shots'; render();
-    if (!steps[3].ok) {
+    if (!steps[4].ok) {
       const first = cur.shots.find((s) => !s.video_file || s.status === 'rejected');
       document.getElementById(`st-shot-${first.id}`)?.scrollIntoView({ block: 'start' });
       toast(`ต่อไป: สร้าง${still ? 'รูป' : 'คลิป'}ตาม prompt (กด “คัดลอก prompt ทั้งหมด”) แล้วแนบไฟล์ — แนบหลายไฟล์พร้อมกันได้`);
@@ -67,10 +74,15 @@
   }
   function stepper() {
     const { steps, now } = stepState();
-    const go = h('button', { class: 'btn primary', type: 'button', textContent: now === 4 ? '▶ ไปขั้นรวมคลิป' : `▶ ทำขั้นถัดไป (${steps[now].t.slice(2)})` });
+    const go = h('button', { class: 'btn primary', type: 'button', textContent: now === 5 ? '▶ ไปขั้นรวมคลิป' : `▶ ทำขั้นถัดไป (${steps[now].t.slice(2)})` });
     go.addEventListener('click', () => guard(go, runNext, (e) => { $('st-msg').textContent = e.message; toast(e.message, true); }));
     return h('div', { class: 'st-steps' },
-      h('ol', {}, ...steps.map((s, i) => h('li', { class: s.ok ? 'done' : i === now ? 'now' : '', textContent: `${s.ok ? '✓ ' : ''}${s.t}${s.note ? ` (${s.note})` : ''}` }))),
+      h('ol', {}, ...steps.map((s, i) => {
+        const text = `${s.ok ? '✓ ' : ''}${s.t}${s.note ? ` (${s.note})` : ''}`;
+        const li = h('li', { class: s.ok ? 'done' : i === now ? 'now' : '' });
+        if (s.go) { const b = h('button', { class: 'st-step-link', type: 'button', textContent: `${text} ✎`, title: 'เปลี่ยนรูปแบบงาน/เว็บที่ใช้สร้าง' }); b.addEventListener('click', s.go); li.append(b); } else li.textContent = text;
+        return li;
+      })),
       go);
   }
 
@@ -80,6 +92,7 @@
       cur = await api(method, url, body);
       then?.();
       refreshSums();
+      document.querySelector('#st-body .st-steps')?.replaceWith(stepper()); // ขั้น 1 แสดงแบบงาน/เว็บปัจจุบัน
       return true;
     } catch (e) { $('st-msg').textContent = e.message; toast(e.message, true); return false; }
   }
@@ -90,12 +103,12 @@
     const p = cur.project;
     const patch = (k, v) => save('PATCH', `/api/story/projects/${p.id}`, { [k]: v }, () => { est.textContent = estText(); });
     const title = h('input', { value: p.title, maxLength: 150 });
-    const premise = h('textarea', { rows: 10, value: p.premise, placeholder: 'วางเรื่องย่อ/เนื้อเรื่องที่จะทำเป็นหนังสั้น (เขียนด้วยคำของคุณเอง) — AI ใช้เฉพาะเหตุการณ์ในนี้ ไม่แต่งเพิ่ม' });
+    const premise = h('textarea', { id: 'st-premise', rows: 10, value: p.premise, placeholder: 'วางเรื่องย่อ/เนื้อเรื่องที่จะทำเป็นหนังสั้น (เขียนด้วยคำของคุณเอง) — AI ใช้เฉพาะเหตุการณ์ในนี้ ไม่แต่งเพิ่ม' });
     const total = h('input', { type: 'number', min: 10, max: 1800, step: 1, value: p.total_sec });
     const shot = h('input', { type: 'number', min: 3, max: 15, step: 1, value: p.shot_sec });
     const aspect = h('select', {}, ...['9:16', '4:5', '1:1', '16:9'].map((a) => new Option(a, a)));
     aspect.value = p.aspect;
-    const media = h('select', {}, new Option('🎬 วิดีโอสั้นต่อช็อต', 'video'), new Option('🖼 ภาพนิ่งต่อช็อต', 'image'));
+    const media = h('select', { id: 'st-media' }, new Option('🖼 ภาพนิ่งต่อช็อต (ChatGPT / Flow / Meta AI)', 'image'), new Option('🎬 วิดีโอสั้นต่อช็อต (Flow / Meta AI / Seedance)', 'video'));
     media.value = p.media || 'video';
     const gen = genSelect(p);
     const perImg = perSelect(p);
@@ -121,18 +134,18 @@
     });
     gen.addEventListener('change', () => patch('generator', gen.value));
     style.addEventListener('change', () => patch('style', style.value));
-    // จัดเป็นการ์ดพับได้ตามลำดับการทำงาน: เนื้อเรื่อง → การผลิต → โทนภาพ → แหล่งข้อมูล (หัวการ์ดสรุปค่าปัจจุบันไว้ ไม่ต้องกางก็เห็น)
+    // จัดเป็นการ์ดพับได้ตามลำดับการทำงาน: แบบงาน (เลือกก่อน — กำหนด prompt และเว็บที่ใช้ได้) → เนื้อเรื่อง → โทนภาพ → แหล่งข้อมูล
     const sm = storySums();
     return h('div', { class: 'st-pane' },
-      acc('story', '📖 เนื้อเรื่อง', sm.story, true,
-        field('ชื่อเรื่อง', title), field('เรื่องย่อ / เนื้อเรื่อง', premise)),
-      acc('prod', '⚙ การผลิต', sm.prod, true,
+      acc('prod', '⚙ แบบงาน (เลือกก่อน)', sm.prod, true,
         h('div', { class: 'st-grid2' },
           field('รูปแบบของแต่ละช็อต', media, p.media === 'image' ? 'สร้างรูปเองทีละช็อต (ไม่ใช้ภาพต้นฉบับของใคร) แล้วซูม/แพนให้ขยับตอนรวมคลิป' : 'สร้างคลิปสั้นทีละช็อตด้วย AI วิดีโอ แล้วต่อกันเป็นคลิปเดียว'),
           field(`ไปสร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ไหน`, gen, 'กำหนดคำแนะนำและลิงก์ในแท็บช็อต')),
         ...(p.media === 'image' ? [field('สร้างกี่ช็อตต่อ 1 รูป', perImg, 'หลายช็อตในรูปเดียว = ตัวละครเหมือนกันทุกช็อตและส่งน้อยครั้งกว่า แต่ภาพแต่ละช็อตเล็กลง — แท็บช็อตจะแตก prompt เป็นตารางและตัดรูปแบ่งเข้าช็อตให้')] : []),
         h('div', { class: 'st-row' }, field('ความยาวรวม (วินาที)', total), field('ความยาวต่อช็อต (วินาที)', shot), field('อัตราส่วน', aspect)),
         est),
+      acc('story', '📖 เนื้อเรื่อง', sm.story, true,
+        field('ชื่อเรื่อง', title), field('เรื่องย่อ / เนื้อเรื่อง', premise)),
       acc('look', '🎨 โทนภาพ (คุมทุกช็อตให้เหมือนกัน)', sm.look, true, lookBox(style)),
       acc('src', '🔗 แหล่งข้อมูล', sm.src, false, sourcesBox()),
       h('p', { class: 'hint', textContent: 'ถัดไป: ไปแท็บ “ตัวละคร/สถานที่” ให้ AI ร่างคลังจากเรื่องย่อ ตรวจแก้ แล้วไปแท็บ “ช็อต” — หรือกด “ทำขั้นถัดไป” ด้านบน' }));
@@ -169,12 +182,18 @@
     return d;
   }
 
-  // ตัวเลือกเว็บสร้าง กรองตามรูปแบบช็อต (รูป/วิดีโอ) — ถ้าค่าที่เลือกไว้ทำแบบนี้ไม่ได้ ยังโชว์ไว้แต่บอกชัด ๆ ให้เปลี่ยน
+  // ตัวเลือกเว็บสร้าง: โชว์ทุกเว็บ เว็บที่ทำรูปแบบนี้ไม่ได้ (เช่น ChatGPT กับวิดีโอ) เป็นสีจางกดไม่ได้ พร้อมบอกว่าต้องเปลี่ยนแบบงานก่อน
+  // (ไม่ซ่อนไปเฉย ๆ — ผู้ใช้จะงงว่าเว็บหายไปไหน) ถ้าค่าที่เลือกไว้ใช้ไม่ได้ ยังแสดงอยู่แต่บอกให้เลือกใหม่
   function genSelect(p) {
     const m = p.media || 'video';
-    const keys = window.ARN_GEN_FOR(m);
-    const sel = h('select', { 'aria-label': `สร้าง${m === 'image' ? 'รูป' : 'คลิป'}ที่ไหน` }, ...keys.map((k) => new Option(GEN[k].name, k)));
-    if (GEN[p.generator] && !keys.includes(p.generator)) sel.prepend(new Option(`${GEN[p.generator].name} (ทำ${m === 'image' ? 'รูป' : 'วิดีโอ'}ไม่ได้ — เลือกใหม่)`, p.generator));
+    const ok = window.ARN_GEN_FOR(m);
+    const why = (k) => (GEN[k].media.includes('image') ? 'ทำได้แค่รูป — เปลี่ยนแบบงานเป็นภาพนิ่งก่อน' : 'ทำได้แค่วิดีโอ — เปลี่ยนแบบงานเป็นวิดีโอก่อน');
+    const sel = h('select', {}, ...Object.keys(GEN).map((k) => {
+      const o = new Option(ok.includes(k) ? GEN[k].name : `${GEN[k].name} (${k === p.generator ? 'ใช้กับแบบงานนี้ไม่ได้ — เลือกใหม่' : why(k)})`, k);
+      o.disabled = !ok.includes(k) && k !== p.generator;
+      return o;
+    }));
+    sel.setAttribute('aria-label', `สร้าง${m === 'image' ? 'รูป' : 'คลิป'}ที่ไหน`);
     sel.value = GEN[p.generator] ? p.generator : 'flow';
     return sel;
   }
@@ -193,7 +212,10 @@
     };
     sel.addEventListener('change', () => save('PATCH', `/api/story/projects/${p.id}`, { generator: sel.value }, paint));
     paint();
+    const fmt = h('button', { class: 'btn sm ghost', type: 'button', textContent: '✎ เปลี่ยนแบบงาน' });
+    fmt.addEventListener('click', gotoFormat);
     return h('div', { class: 'st-gen' },
+      h('div', { class: 'row' }, h('span', { class: 'cap-label', textContent: `แบบงาน: ${p.media === 'image' ? `🖼 ภาพนิ่ง${p.per_image > 1 ? ` (${p.per_image} ช็อต/รูป)` : ''}` : '🎬 วิดีโอ'}` }), fmt),
       h('div', { class: 'row' }, h('span', { class: 'cap-label', textContent: `สร้าง${p.media === 'image' ? 'รูป' : 'คลิป'}ที่` }), sel, link), tip);
   }
 
@@ -224,11 +246,11 @@
 
   // ---------- หลายช็อตในรูปเดียว (โหมดภาพนิ่ง): prompt ตาราง 4/12 ช่อง → แนบรูปตาราง → ตัดแบ่งเข้าช็อต ----------
   // ค่าที่เลือกเก็บในโปรเจกต์ (per_image) ตั้งได้ทั้งในแท็บเรื่อง → การผลิต และในแท็บช็อต; 1 = ทีละช็อต (ปิดกรอบนี้ไว้)
-  function perSelect(p) {
+  function perSelect(p, onPick) { // onPick: ใช้ในฟอร์มโปรเจกต์ใหม่ (ยังไม่มีโปรเจกต์ให้บันทึก)
     const sel = h('select', {}, new Option('1 ช็อต/รูป (ทีละช็อต — คมสุด)', '1'), new Option('4 ช็อต/รูป (ตาราง 2×2)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
     sel.setAttribute('aria-label', 'จำนวนช็อตต่อรูป');
     sel.value = String(p.per_image || 1);
-    sel.addEventListener('change', () => save('PATCH', `/api/story/projects/${p.id}`, { per_image: Number(sel.value) }));
+    sel.addEventListener('change', () => (onPick ? onPick(Number(sel.value)) : save('PATCH', `/api/story/projects/${p.id}`, { per_image: Number(sel.value) })));
     return sel;
   }
   function sheetBox() {
@@ -763,13 +785,55 @@
     await loadList(cur.project.id); // คลังเปลี่ยนมีผลกับ prompt/คำเตือน → โหลดสดก่อนวาด
     render();
   }));
-  const create = (title) => guard($('st-new'), async () => {
-    const p = await api('POST', '/api/story/projects', { title: title || 'เรื่องใหม่', media: 'image', generator: 'flow' }); // ทางหลัก = ภาพนิ่ง (สร้างรูปเอง)
-    await loadList(p.id); tab = 'story'; render();
-  }, (e) => toast(e.message, true));
+  // สร้างโปรเจกต์ใหม่: เลือกแบบงาน (ภาพนิ่ง/วิดีโอ) + เว็บ + ช็อตต่อรูป ตั้งแต่แรก — เพราะกำหนด prompt ทุกช็อตและเว็บที่ใช้ได้
+  function newProjectForm() {
+    const name = h('input', { maxLength: 150, placeholder: 'เช่น คัมภีร์วิถีเซียน ตอนที่ 20', autocomplete: 'off', spellcheck: false });
+    const radio = (v, label, hint) => {
+      const r = h('input', { type: 'radio', name: 'st-nf-media', value: v });
+      return [r, h('label', { class: 'st-choice' }, r, h('span', {}, h('b', { textContent: label }), h('small', { textContent: hint })))];
+    };
+    const [rImg, lImg] = radio('image', '🖼 ภาพนิ่งต่อช็อต', 'สร้างรูปเองทีละช็อต (ChatGPT / Flow / Meta AI) แล้วซูม/แพนให้ขยับตอนรวมคลิป — ไม่ต้องใช้โมเดลวิดีโอ');
+    const [rVid, lVid] = radio('video', '🎬 วิดีโอสั้นต่อช็อต', 'สร้างคลิปสั้นทีละช็อต (Flow / Meta AI / Seedance) แล้วต่อกันเป็นคลิปเดียว');
+    rImg.checked = true;
+    const genBox = h('div');
+    const perBox = h('div');
+    const media = () => (rVid.checked ? 'video' : 'image');
+    let gen = 'chatgpt', per = 1;
+    const paint = () => {
+      const m = media();
+      if (!GEN[gen].media.includes(m)) gen = m === 'image' ? 'chatgpt' : 'flow';
+      const sel = genSelect({ media: m, generator: gen });
+      sel.addEventListener('change', () => { gen = sel.value; });
+      genBox.replaceChildren(field(`สร้าง${m === 'image' ? 'รูป' : 'คลิป'}ที่ไหน`, sel));
+      const ps = perSelect({ per_image: per }, (v) => { per = v; });
+      perBox.replaceChildren(...(m === 'image' ? [field('สร้างกี่ช็อตต่อ 1 รูป', ps, 'เปลี่ยนภายหลังได้')] : []));
+    };
+    rImg.addEventListener('change', paint); rVid.addEventListener('change', paint);
+    paint();
+    const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
+    const yes = h('button', { class: 'btn primary', type: 'submit', textContent: 'สร้างโปรเจกต์' });
+    const form = h('form', { method: 'dialog', class: 'ask st-newform' },
+      h('h3', { textContent: 'โปรเจกต์เรื่องใหม่' }),
+      field('ชื่อเรื่อง', name),
+      h('div', { class: 'st-choices', role: 'radiogroup', 'aria-label': 'แบบงาน' }, h('span', { class: 'cap-label', textContent: 'แบบงาน (เลือกก่อน — เปลี่ยนภายหลังได้ แต่ prompt จะถูกประกอบใหม่)' }), lImg, lVid),
+      genBox, perBox,
+      h('div', { class: 'ask-btns' }, no, yes));
+    const d = h('dialog', { class: 'st-newdlg' }, form);
+    document.body.append(d);
+    return new Promise((resolve) => {
+      let out = null;
+      no.addEventListener('click', () => d.close());
+      form.addEventListener('submit', () => { out = { title: name.value.trim() || 'เรื่องใหม่', media: media(), generator: gen, ...(media() === 'image' ? { per_image: per } : {}) }; });
+      d.addEventListener('close', () => { d.remove(); resolve(out); });
+      d.showModal(); name.focus();
+    });
+  }
   $('st-new').addEventListener('click', async () => {
-    const t = await uiPrompt('ตั้งชื่อเรื่อง', { title: 'โปรเจกต์เรื่องใหม่', ok: 'สร้าง', placeholder: 'เช่น คัมภีร์วิถีเซียน ตอนที่ 20' });
-    if (t !== null) create(t);
+    const body = await newProjectForm();
+    if (body) guard($('st-new'), async () => {
+      const p = await api('POST', '/api/story/projects', body);
+      await loadList(p.id); tab = 'story'; render();
+    }, (e) => toast(e.message, true));
   });
   $('st-new2').addEventListener('click', () => $('st-new').click());
   $('st-del').addEventListener('click', () => guard($('st-del'), async () => {
