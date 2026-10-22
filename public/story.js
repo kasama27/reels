@@ -961,6 +961,40 @@
       toast(p.warnings?.length ? `นำเข้าแล้ว — ${p.warnings.join(' / ')}` : 'นำเข้า prompt แล้ว — ตรวจช็อตแล้วแนบรูป/คลิปต่อได้เลย');
     }, (e) => toast(e.message, true));
   };
+  // คอนเทนต์แฟนบอลสายฮา: ผลบอล + มุก → AI เขียนสคริปต์ล้อเลียน → โปรเจกต์พร้อมตัวละคร/ช็อต (ตัวละครสมมติ ไม่ใช้ชื่อ/หน้าบุคคลจริง)
+  function fanForm() {
+    const match = h('input', { maxLength: 500, placeholder: 'เช่น แมนยู 1–4 โคโม่ (ศึกยูซีแอล) · ทีมแดงยิงตัวเองซ้ำ ๆ', autocomplete: 'off' });
+    const notes = h('textarea', { rows: 3, maxLength: 1000, placeholder: 'มุก/ไอเดียที่อยากให้เล่น (ไม่ใส่ก็ได้) เช่น ล้อเรื่อง “ทริปอิตาลี” “4 เม็ด”' });
+    const total = h('select', { 'aria-label': 'ความยาว' }, ...[[45, '45 วิ'], [60, '60 วิ'], [90, '90 วิ']].map(([v, t]) => h('option', { value: v, textContent: t, selected: v === 60 })));
+    const media = h('select', { 'aria-label': 'แบบงาน' }, h('option', { value: 'image', textContent: '🖼 ภาพนิ่งต่อช็อต (เร็ว กันลิขสิทธิ์)' }), h('option', { value: 'video', textContent: '🎬 วิดีโอสั้นต่อช็อต' }));
+    const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
+    const yes = h('button', { class: 'btn primary', type: 'submit', textContent: '⚽ เขียนสคริปต์ + สร้างโปรเจกต์' });
+    const form = h('form', { method: 'dialog', class: 'ask st-newform' },
+      h('h3', { textContent: '⚽ แฟนบอลสายฮา' }),
+      field('ผลบอล / เหตุการณ์ (ใช้เฉพาะข้อเท็จจริงที่ใส่ที่นี่)', match), field('มุกที่อยากเล่น', notes),
+      h('div', { class: 'row' }, field('ความยาว', total), field('แบบงาน', media)),
+      h('p', { class: 'hint', textContent: 'ตัวละครเป็นคนสมมติ (กัปตัน/ผู้จัดการทีมสี) ไม่ใช้ชื่อหรือหน้าตาบุคคลจริง · ใช้เวลา ~1 นาที ได้สคริปต์ 5 ฉากพร้อมบทพูดไทย แก้ต่อได้ในโปรเจกต์' }),
+      h('div', { class: 'ask-btns' }, no, yes));
+    const d = h('dialog', { class: 'st-newdlg' }, form);
+    document.body.append(d);
+    return new Promise((resolve) => {
+      let res = null;
+      no.addEventListener('click', () => d.close());
+      form.addEventListener('submit', () => { if (match.value.trim()) res = { match: match.value, notes: notes.value, total: Number(total.value), media: media.value }; });
+      d.addEventListener('close', () => { d.remove(); resolve(res); });
+      d.showModal(); match.focus();
+    });
+  }
+  $('st-fan').addEventListener('click', async () => {
+    const body = await fanForm();
+    if (!body) return;
+    guard($('st-fan'), async () => {
+      toast('AI กำลังเขียนสคริปต์สายฮา… (~1 นาที)');
+      const p = await api('POST', '/api/story/fan-comedy', body);
+      await loadList(p.project.id); tab = 'story'; render();
+      toast(p.warnings?.length ? `สร้างแล้ว — ${p.warnings.join(' / ')}` : 'สร้างโปรเจกต์สายฮาแล้ว — ตรวจบทพูดแล้วสร้างรูปต่อได้เลย');
+    }, (e) => toast(e.message, true));
+  });
   $('st-import').addEventListener('click', () => runImport($('st-import')));
   $('st-import2').addEventListener('click', () => runImport($('st-import2')));
   $('st-del').addEventListener('click', () => guard($('st-del'), async () => {

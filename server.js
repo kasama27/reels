@@ -543,6 +543,18 @@ function storyProjectBody(b, partial = false) {
   }
   return out;
 }
+// สร้างโปรเจกต์เรื่องจากสคริปต์ที่แยกแล้ว (ใช้ร่วมกันโดย "นำเข้า prompt" และ "แฟนบอลสายฮา")
+function createFromScript(b, r, text) {
+  const media = b.media === 'image' ? 'image' : 'video';
+  if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ต้องเป็น flow | chatgpt | meta');
+  const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 150) : r.title;
+  const p = story.createProject({ title, premise: text.replace(/\r\n/g, '\n').trim().slice(0, 30000), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator });
+  story.updateProject(p.id, { look: JSON.stringify(r.look) });
+  const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
+  for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
+  story.rebuildPrompts(p.id);
+  return { ...story.getProject(p.id), warnings: r.warnings };
+}
 function mustProject(id) { const p = story.getProjectRow(id); if (!p) throw new HttpError(404, 'ไม่พบโปรเจกต์'); return p; }
 
 const routes = [
@@ -556,15 +568,19 @@ const routes = [
     let r;
     try { r = parsePromptScript(b.text); } catch (e) { throw new HttpError(400, e.message); }
     if (b.dry === true) return { title: r.title, total_sec: r.total_sec, characters: r.characters.length, shots: r.shots.map((s) => ({ scene: s.scene, duration: s.duration, narration: s.narration })), warnings: r.warnings };
-    const media = b.media === 'image' ? 'image' : 'video';
-    if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ต้องเป็น flow | chatgpt | meta');
-    const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 150) : r.title;
-    const p = story.createProject({ title, premise: b.text.replace(/\r\n/g, '\n').trim(), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator });
-    story.updateProject(p.id, { look: JSON.stringify(r.look) });
-    const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
-    for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
-    story.rebuildPrompts(p.id);
-    return { ...story.getProject(p.id), warnings: r.warnings };
+    return createFromScript(b, r, b.text);
+  }],
+  // คอนเทนต์แฟนบอลสายฮา: ผลบอล/มุก → AI เขียนสคริปต์ล้อเลียนรูปแบบเดียวกับนำเข้า → สร้างโปรเจกต์ทันที (สคริปต์เก็บในช่องเรื่องย่อ แก้ต่อได้)
+  ['POST', /^\/api\/story\/fan-comedy$/, async (req) => {
+    const b = await readBody(req);
+    const match = typeof b.match === 'string' ? b.match.trim() : '';
+    if (!match || match.length > 500) throw new HttpError(400, 'ใส่ผลบอล/เหตุการณ์ (ไม่เกิน 500 ตัวอักษร)');
+    const notes = typeof b.notes === 'string' ? b.notes.trim().slice(0, 1000) : '';
+    const total = Math.min(90, Math.max(30, Number(b.total) || 60));
+    const text = await ai.writeFanComedy({ match, notes, total });
+    let r;
+    try { r = parsePromptScript(text); } catch (e) { throw new HttpError(502, `AI เขียนสคริปต์ผิดรูปแบบ ลองใหม่อีกครั้ง (${e.message})`); }
+    return createFromScript(b, r, text);
   }],
   ['GET', /^\/api\/story\/projects\/(\d+)$/, async (req, m) => { mustProject(+m[1]); return story.getProject(+m[1]); }],
   ['PATCH', /^\/api\/story\/projects\/(\d+)$/, async (req, m) => {
