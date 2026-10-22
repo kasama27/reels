@@ -22,6 +22,7 @@ const cli = require('./lib/claude-cli');
 const feeds = require('./lib/feeds');
 const brandLib = require('./lib/brand');
 const story = require('./lib/story');
+const { parsePromptScript } = require('./lib/promptimport');
 const pondy = require('./lib/pondy');
 
 const feedCache = new Map(); // feedId -> { t, items }  (แคช 5 นาที ไม่ยิงเว็บข่าวถี่เกิน)
@@ -547,6 +548,24 @@ function mustProject(id) { const p = story.getProjectRow(id); if (!p) throw new 
 const routes = [
   ['GET', /^\/api\/story\/projects$/, async () => story.listProjects()],
   ['POST', /^\/api\/story\/projects$/, async (req) => story.createProject(storyProjectBody(await readBody(req)))],
+  // นำเข้า prompt หนังสั้นสำเร็จรูป (SCENE n — … (a–bs)) → โปรเจกต์ + ตัวละคร + ช็อตตามต้นฉบับ ไม่ใช้ AI; dry=true คืนผลแยกให้ดูก่อนโดยไม่บันทึก
+  ['POST', /^\/api\/story\/import$/, async (req) => {
+    const b = await readBody(req);
+    if (typeof b.text !== 'string' || !b.text.trim()) throw new HttpError(400, 'วาง prompt ก่อน');
+    if (b.text.length > 30000) throw new HttpError(400, 'prompt ยาวเกิน 30000 ตัวอักษร');
+    let r;
+    try { r = parsePromptScript(b.text); } catch (e) { throw new HttpError(400, e.message); }
+    if (b.dry === true) return { title: r.title, total_sec: r.total_sec, characters: r.characters.length, shots: r.shots.map((s) => ({ scene: s.scene, duration: s.duration, narration: s.narration })), warnings: r.warnings };
+    const media = b.media === 'image' ? 'image' : 'video';
+    if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ต้องเป็น flow | chatgpt | meta');
+    const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 150) : r.title;
+    const p = story.createProject({ title, premise: b.text.replace(/\r\n/g, '\n').trim(), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator });
+    story.updateProject(p.id, { look: JSON.stringify(r.look) });
+    const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
+    for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
+    story.rebuildPrompts(p.id);
+    return { ...story.getProject(p.id), warnings: r.warnings };
+  }],
   ['GET', /^\/api\/story\/projects\/(\d+)$/, async (req, m) => { mustProject(+m[1]); return story.getProject(+m[1]); }],
   ['PATCH', /^\/api\/story\/projects\/(\d+)$/, async (req, m) => {
     mustProject(+m[1]);

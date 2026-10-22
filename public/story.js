@@ -922,6 +922,47 @@
     }, (e) => toast(e.message, true));
   });
   $('st-new2').addEventListener('click', () => $('st-new').click());
+
+  // นำเข้า prompt สำเร็จรูป: วางทั้งก้อน → ตรวจ (dry-run แสดงช็อต/บทพูด/คำเตือน) → นำเข้า ไม่ใช้ AI บทพูดไทยคงตามต้นฉบับ
+  function importForm() {
+    const ta = h('textarea', { rows: 12, spellcheck: false, placeholder: 'วาง prompt ทั้งก้อน เช่น\n“ชื่อเรื่อง”\nStyle: …\nCharacter consistency:\n* ชื่อ: คำอธิบาย\nSCENE 1 — ARRIVAL (0–10s)\n…' });
+    const media = h('select', { 'aria-label': 'แบบงาน' }, h('option', { value: 'video', textContent: '🎬 วิดีโอสั้นต่อช็อต' }), h('option', { value: 'image', textContent: '🖼 ภาพนิ่งต่อช็อต' }));
+    const out = h('div', { class: 'hint', role: 'status' });
+    const check = h('button', { class: 'btn', type: 'button', textContent: 'ตรวจก่อน' });
+    const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
+    const yes = h('button', { class: 'btn primary', type: 'submit', textContent: 'นำเข้า' });
+    const form = h('form', { method: 'dialog', class: 'ask st-newform' },
+      h('h3', { textContent: 'นำเข้า prompt สำเร็จรูป' }),
+      field('prompt', ta, 'ต้องมีหัวฉาก “SCENE n — ชื่อฉาก (เริ่ม–จบs)” — แต่ละฉากเป็น 1 ช็อต บทพูดไทยในเครื่องหมายคำพูดกลายเป็นคำบรรยาย'),
+      field('แบบงาน', media), out,
+      h('div', { class: 'ask-btns' }, check, no, yes));
+    const d = h('dialog', { class: 'st-newdlg' }, form);
+    document.body.append(d);
+    check.addEventListener('click', () => guard(check, async () => {
+      const r = await api('POST', '/api/story/import', { text: ta.value, dry: true });
+      out.textContent = `“${r.title}” · ${r.characters} ตัวละคร · ${r.shots.length} ช็อต รวม ${fmtSec(r.total_sec)}\n` +
+        r.shots.map((s, i) => `${i + 1}. ${s.scene} (${s.duration} วิ) ${s.narration ? `— ${s.narration}` : ''}`).join('\n') + (r.warnings.length ? `\n⚠ ${r.warnings.join('\n⚠ ')}` : '');
+      out.style.whiteSpace = 'pre-wrap';
+    }, (e) => { out.textContent = e.message; }));
+    return new Promise((resolve) => {
+      let res = null;
+      no.addEventListener('click', () => d.close());
+      form.addEventListener('submit', () => { res = { text: ta.value, media: media.value }; });
+      d.addEventListener('close', () => { d.remove(); resolve(res); });
+      d.showModal(); ta.focus();
+    });
+  }
+  const runImport = async (btn) => {
+    const body = await importForm();
+    if (!body) return;
+    guard(btn, async () => {
+      const p = await api('POST', '/api/story/import', body);
+      await loadList(p.project.id); tab = 'story'; render();
+      toast(p.warnings?.length ? `นำเข้าแล้ว — ${p.warnings.join(' / ')}` : 'นำเข้า prompt แล้ว — ตรวจช็อตแล้วแนบรูป/คลิปต่อได้เลย');
+    }, (e) => toast(e.message, true));
+  };
+  $('st-import').addEventListener('click', () => runImport($('st-import')));
+  $('st-import2').addEventListener('click', () => runImport($('st-import2')));
   $('st-del').addEventListener('click', () => guard($('st-del'), async () => {
     if (!cur || !(await uiConfirm(`ลบโปรเจกต์ “${cur.project.title}” พร้อมตัวละครและช็อตทั้งหมด?`, { title: 'ลบโปรเจกต์', ok: 'ลบ', danger: true }))) return;
     await api('DELETE', `/api/story/projects/${cur.project.id}`);
