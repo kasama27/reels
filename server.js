@@ -548,7 +548,7 @@ function createFromScript(b, r, text) {
   const media = b.media === 'image' ? 'image' : 'video';
   if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, `generator ต้องเป็น ${story.GENERATORS.join(' | ')}`);
   const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 150) : r.title;
-  const per = story.PER_IMAGE.includes(Number(b.per_image)) ? Number(b.per_image) : 1;
+  const per = story.PER_IMAGE.includes(Number(b.per_image)) ? Number(b.per_image) : (media === 'image' && story.PER_IMAGE.includes(r.grid) ? r.grid : 1);
   const sources = (Array.isArray(b.sources) ? b.sources : []).filter((u) => typeof u === 'string' && /^https?:\/\/\S+$/i.test(u)).slice(0, 40)
     .map((url) => ({ title: '', url: url.slice(0, 500), note: '' }));
   // ทั้งก้อนเป็นธุรกรรมเดียว: ถ้าขั้นไหนล้ม ไม่ทิ้งโปรเจกต์ที่สร้างค้างครึ่งทาง
