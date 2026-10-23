@@ -1021,6 +1021,33 @@
       toast('สร้างโปรเจกต์แล้ว — คัดลอก prompt ตารางไปสร้างรูป แล้วแนบกลับ');
     }, (e) => toast(e.message, true));
   });
+  // ปุ่ม “＋ สร้างใหม่” ปุ่มเดียว → เลือกวิธีสร้างจากการ์ด (แนะนำให้ AI ทำเร็วสุดไว้บนสุด) แทนปุ่มกระจาย 4 ปุ่มบนแถบ
+  const CREATE_WAYS = [
+    ['st-topic', '✨', 'สร้างจากหัวข้อ', 'ใส่หัวข้อ + เลือกแนวเรื่อง/แนวภาพ → AI ค้นข้อมูลแล้วเขียนสตอรีบอร์ดรูปเดียวหลายช่อง', true],
+    ['st-fan', '⚽', 'แฟนบอลสายฮา', 'ใส่ผลบอล/มุก → AI เขียนหนังสั้นล้อเลียน 5 ฉาก ตัวละครสมมติ', false],
+    ['st-import', '📥', 'นำเข้า prompt สำเร็จรูป', 'วาง prompt ที่เขียนไว้แล้ว (SCENE/PANEL) → แยกตัวละครและช็อตตามต้นฉบับ ไม่ใช้ AI', false],
+    ['st-new', '📝', 'เริ่มจากโปรเจกต์เปล่า', 'ตั้งค่าเอง วางเรื่องย่อ แล้วให้ AI แบ่งช็อตทีหลัง', false],
+  ];
+  function openCreateMenu() {
+    const d = h('dialog', { class: 'st-newdlg st-create' });
+    const close = h('button', { class: 'btn ghost', type: 'button', textContent: 'ปิด' });
+    close.addEventListener('click', () => d.close());
+    d.append(h('form', { method: 'dialog', class: 'ask' },
+      h('h3', { textContent: 'สร้างเรื่องใหม่ — เลือกวิธี' }),
+      ...CREATE_WAYS.map(([id, ico, name, desc, rec]) => {
+        const b = h('button', { class: `st-way${rec ? ' rec' : ''}`, type: 'button' },
+          h('span', { class: 'st-way-ico', textContent: ico }),
+          h('span', {}, h('b', { textContent: name + (rec ? ' · แนะนำ' : '') }), h('small', { textContent: desc })));
+        b.addEventListener('click', () => { d.close(); $(id).click(); });
+        return b;
+      }),
+      h('div', { class: 'ask-btns' }, close)));
+    d.addEventListener('close', () => d.remove());
+    document.body.append(d);
+    d.showModal();
+  }
+  $('st-create').addEventListener('click', openCreateMenu);
+  $('st-create2').addEventListener('click', openCreateMenu);
   $('st-fan').addEventListener('click', async () => {
     const body = await fanForm();
     if (!body) return;

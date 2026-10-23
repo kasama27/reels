@@ -442,3 +442,12 @@ dialog.st-newdlg { width: min(520px, calc(100vw - 24px)); padding: 0; }
 
 .ext-steps { margin: 6px 0 10px; padding-left: 20px; font-size: 13.5px; color: var(--muted); display: grid; gap: 4px; }
 .ext-steps code { word-break: break-all; }
+
+/* เมนู “สร้างใหม่” ของโปรเจกต์เรื่อง: การ์ดเลือกวิธีสร้าง */
+dialog.st-create { width: min(480px, calc(100vw - 24px)); padding: 0; }
+.st-way { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; padding: 12px 14px; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.st-way:hover, .st-way:focus-visible { border-color: var(--accent, #7c6cff); background: rgba(124, 108, 255, .08); outline: none; }
+.st-way.rec { border-color: var(--accent, #7c6cff); }
+.st-way-ico { font-size: 22px; line-height: 1.2; }
+.st-way b { display: block; }
+.st-way small { display: block; color: var(--muted); margin-top: 2px; }
