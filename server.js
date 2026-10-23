@@ -612,8 +612,12 @@ const routes = [
   }],
   ['GET', /^\/api\/story\/projects\/(\d+)$/, async (req, m) => { mustProject(+m[1]); return story.getProject(+m[1]); }],
   ['PATCH', /^\/api\/story\/projects\/(\d+)$/, async (req, m) => {
-    mustProject(+m[1]);
+    const cur = mustProject(+m[1]);
     const f = storyProjectBody(await readBody(req), true);
+    // เว็บสร้างรูป/คลิปและจำนวนช็อตต่อรูปต้องเข้ากับแบบงานเสมอ (createProject ทำอยู่แล้ว — PATCH ต้องทำเหมือนกัน)
+    const media = f.media ?? cur.media;
+    if (f.media !== undefined || f.generator !== undefined) f.generator = story.fitGen(media, f.generator ?? cur.generator);
+    if (media === 'video') f.per_image = 1;
     story.updateProject(+m[1], f);
     if (f.media || f.look) story.rebuildPrompts(+m[1]); // เปลี่ยนวิดีโอ↔ภาพนิ่ง หรือโทนภาพ: ประกอบ prompt ทุกช็อตใหม่
     return story.getProject(+m[1]);

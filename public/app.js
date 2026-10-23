@@ -69,7 +69,8 @@ const busyStack = [];
 const STOPPED = 'หยุดแล้ว';
 function overlayHost() { const open = [...document.querySelectorAll('dialog[open]')]; return open[open.length - 1] || document.body; }
 function liftOverlay(el) { const host = overlayHost(); if (el && el.parentElement !== host) host.append(el); }
-for (const d of document.querySelectorAll('dialog')) d.addEventListener('close', () => { liftOverlay($('task')); liftOverlay($('toast')); });
+// ดักทุกหน้าต่าง รวมที่สร้างทีหลัง (ฟอร์ม/เมนูใน story.js ที่ d.remove() ตอนปิด) — ไม่งั้นการ์ดงาน/toast ที่ย้ายเข้าไปอยู่ในหน้าต่างนั้นจะหายไปกับมัน
+document.addEventListener('close', (e) => { if (e.target instanceof HTMLDialogElement) { liftOverlay($('task')); liftOverlay($('toast')); } }, true);
 
 // งานที่หยุดได้ (มี AbortController): ปุ่มที่กดเริ่มงานกลายเป็นปุ่มหยุด — ชี้/โฟกัสแล้วขึ้น "✕ หยุด" กดแล้วยกเลิก
 // (ปกติ guard ปิดปุ่มไว้กันกดซ้ำ → เปิดให้กดได้ แต่ดักคลิกไว้ก่อนถึงตัวจัดการเดิม จึงไม่เริ่มงานซ้ำ)
