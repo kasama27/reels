@@ -508,7 +508,7 @@ function storyProjectBody(b, partial = false) {
     out.narr_tone = b.narr_tone;
   }
   if (b.per_image !== undefined) {
-    if (!story.PER_IMAGE.includes(Number(b.per_image))) throw new HttpError(400, 'per_image ต้องเป็น 1, 4 หรือ 12');
+    if (!story.PER_IMAGE.includes(Number(b.per_image))) throw new HttpError(400, 'per_image ต้องเป็น 1, 4, 6 หรือ 12');
     out.per_image = Number(b.per_image);
   }
   if (b.aspect !== undefined) {
@@ -548,7 +548,9 @@ function createFromScript(b, r, text) {
   const media = b.media === 'image' ? 'image' : 'video';
   if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ต้องเป็น flow | chatgpt | meta');
   const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 150) : r.title;
-  const p = story.createProject({ title, premise: text.replace(/\r\n/g, '\n').trim().slice(0, 30000), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator });
+  const per = story.PER_IMAGE.includes(Number(b.per_image)) ? Number(b.per_image) : 1;
+  const p = story.createProject({ title, premise: text.replace(/\r\n/g, '\n').trim().slice(0, 30000), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator, per_image: per });
+  if (Array.isArray(b.sources) && b.sources.length) story.updateProject(p.id, { sources: JSON.stringify(b.sources.slice(0, 40).map((url) => ({ title: '', url: String(url).slice(0, 500), note: '' }))) });
   story.updateProject(p.id, { look: JSON.stringify(r.look) });
   const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
   for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
@@ -569,6 +571,19 @@ const routes = [
     try { r = parsePromptScript(b.text); } catch (e) { throw new HttpError(400, e.message); }
     if (b.dry === true) return { title: r.title, total_sec: r.total_sec, characters: r.characters.length, shots: r.shots.map((s) => ({ scene: s.scene, duration: s.duration, narration: s.narration })), warnings: r.warnings };
     return createFromScript(b, r, b.text);
+  }],
+  // สร้างจากหัวข้อ: หัวข้อ + แนวเรื่อง + แนวภาพ (+ค้นข้อมูลจริง) → AI เขียนสตอรีบอร์ดหลายช่อง → โปรเจกต์ภาพนิ่งแบบตาราง (1 รูป = N ช่อง) พร้อมไปสร้างรูป
+  ['POST', /^\/api\/story\/from-topic$/, async (req) => {
+    const b = await readBody(req);
+    const topic = typeof b.topic === 'string' ? b.topic.trim() : '';
+    if (!topic || topic.length > 300) throw new HttpError(400, 'ใส่หัวข้อ (ไม่เกิน 300 ตัวอักษร)');
+    const panels = [4, 6, 12].includes(Number(b.panels)) ? Number(b.panels) : 6;
+    const genre = ['parody', 'newsfun', 'spoil', 'explain'].includes(b.genre) ? b.genre : 'parody';
+    const visual = ['cartoon', 'realistic', 'anime', 'stickman'].includes(b.visual) ? b.visual : 'cartoon';
+    const { text, sources } = await ai.writeTopicBoard({ topic, genre, visual, panels, research: b.research === true });
+    let r;
+    try { r = parsePromptScript(text); } catch (e) { throw new HttpError(502, `AI เขียนสคริปต์ผิดรูปแบบ ลองใหม่อีกครั้ง (${e.message})`); }
+    return createFromScript({ media: 'image', generator: b.generator, per_image: panels, sources }, r, text);
   }],
   // คอนเทนต์แฟนบอลสายฮา: ผลบอล/มุก → AI เขียนสคริปต์ล้อเลียนรูปแบบเดียวกับนำเข้า → สร้างโปรเจกต์ทันที (สคริปต์เก็บในช่องเรื่องย่อ แก้ต่อได้)
   ['POST', /^\/api\/story\/fan-comedy$/, async (req) => {
@@ -601,7 +616,7 @@ const routes = [
   ['GET', /^\/api\/story\/projects\/(\d+)\/sheet$/, async (req, m, url) => {
     mustProject(+m[1]);
     const per = Number(url.searchParams.get('per') || 4);
-    if (![4, 12].includes(per)) throw new HttpError(400, 'per ต้องเป็น 4 หรือ 12');
+    if (![4, 6, 12].includes(per)) throw new HttpError(400, 'per ต้องเป็น 4, 6 หรือ 12');
     return story.buildSheet(+m[1], per);
   }],
   // คลังตัวละคร/สถานที่/ของประกอบ

@@ -270,7 +270,7 @@
   // ---------- หลายช็อตในรูปเดียว (โหมดภาพนิ่ง): prompt ตาราง 4/12 ช่อง → แนบรูปตาราง → ตัดแบ่งเข้าช็อต ----------
   // ค่าที่เลือกเก็บในโปรเจกต์ (per_image) ตั้งได้ทั้งในแท็บเรื่อง → การผลิต และในแท็บช็อต; 1 = ทีละช็อต (ปิดกรอบนี้ไว้)
   function perSelect(p, onPick) { // onPick: ใช้ในฟอร์มโปรเจกต์ใหม่ (ยังไม่มีโปรเจกต์ให้บันทึก)
-    const sel = h('select', {}, new Option('1 ช็อต/รูป (ทีละช็อต — คมสุด)', '1'), new Option('4 ช็อต/รูป (ตาราง 2×2)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
+    const sel = h('select', {}, new Option('1 ช็อต/รูป (ทีละช็อต — คมสุด)', '1'), new Option('4 ช็อต/รูป (ตาราง 2×2)', '4'), new Option('6 ช็อต/รูป (ตาราง 2×3)', '6'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
     sel.setAttribute('aria-label', 'จำนวนช็อตต่อรูป');
     sel.value = String(p.per_image || 1);
     sel.addEventListener('change', () => (onPick ? onPick(Number(sel.value)) : save('PATCH', `/api/story/projects/${p.id}`, { per_image: Number(sel.value) })));
@@ -280,9 +280,9 @@
     const p = cur.project;
     const box = h('section', { class: 'st-merged', hidden: true });
     const btn = h('button', { class: 'btn', type: 'button', textContent: '🧩 หลายช็อตในรูปเดียว' });
-    const per = h('select', {}, new Option('4 ช็อต/รูป (ตาราง 2×2 — คมกว่า)', '4'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
+    const per = h('select', {}, new Option('4 ช็อต/รูป (ตาราง 2×2 — คมกว่า)', '4'), new Option('6 ช็อต/รูป (ตาราง 2×3)', '6'), new Option('12 ช็อต/รูป (ตาราง 3×4 — ภาพเล็ก)', '12'));
     per.setAttribute('aria-label', 'จำนวนช็อตต่อรูป');
-    per.value = p.per_image === 12 ? '12' : '4';
+    per.value = [4, 6, 12].includes(p.per_image) ? String(p.per_image) : '4';
     const list = h('div', { class: 'st-merged-list' });
     const load = () => guard(btn, async () => {
       const gs = await api('GET', `/api/story/projects/${p.id}/sheet?per=${per.value}`);
@@ -985,6 +985,42 @@
       d.showModal(); match.focus();
     });
   }
+  // สร้างจากหัวข้อ: หัวข้อ + แนวเรื่อง + แนวภาพ + จำนวนช่อง (+ค้นข้อมูลจริง) → โปรเจกต์ภาพนิ่งแบบตาราง 1 รูป = N ช่อง
+  function topicForm() {
+    const topic = h('input', { maxLength: 300, placeholder: 'เช่น ข่าวพันธุ์กะเพราคุ้มครอง 4 สายพันธุ์ · แมนยู 1–4 โคโม่', autocomplete: 'off' });
+    const sel = (opts, val) => h('select', {}, ...opts.map(([v, t]) => h('option', { value: v, textContent: t, selected: v === val })));
+    const genre = sel([['parody', '😂 ล้อเลียน/เสียดสีสายฮา'], ['newsfun', '📰 ข่าวเล่าแบบฮา'], ['spoil', '🎬 สปอยเรื่อง'], ['explain', '💡 ความรู้/อธิบายง่าย']], 'parody');
+    const visual = sel([['cartoon', '🎨 การ์ตูนคาแรกเตอร์'], ['realistic', '📷 ภาพคนสมจริง (คนสมมติ ไม่ใช่บุคคลจริง)'], ['anime', '🌸 อนิเมะ'], ['stickman', '⚪ สติกแมน']], 'cartoon');
+    const panels = sel([['4', '4 ช่อง (2×2 คมสุด)'], ['6', '6 ช่อง (2×3)'], ['12', '12 ช่อง (3×4 ภาพเล็ก)']], '6');
+    const research = h('input', { type: 'checkbox', checked: true });
+    const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
+    const yes = h('button', { class: 'btn primary', type: 'submit', textContent: '✨ เขียนสตอรีบอร์ด + สร้างโปรเจกต์' });
+    const form = h('form', { method: 'dialog', class: 'ask st-newform' },
+      h('h3', { textContent: '✨ สร้างจากหัวข้อ' }),
+      field('หัวข้อ', topic), field('แนวเรื่อง', genre), field('แนวภาพ', visual), field('จำนวนช่องในรูปเดียว', panels),
+      h('label', { class: 'check' }, research, ' 🔎 ค้นข้อมูลจริงจากเว็บก่อน (ใช้ข้อเท็จจริงที่มีแหล่งอ้างอิงเท่านั้น — ต้องใช้ Claude Code ที่ล็อกอินไว้)'),
+      h('p', { class: 'hint', textContent: 'ได้โปรเจกต์ที่มีตัวละครสมมติ + prompt รูปเดียวหลายช่อง (คัดลอกไปวางใน ChatGPT/Flow) → แนบรูปที่ได้ ระบบตัดเข้าช็อต → รวมเป็นวิดีโอ · ใช้เวลา 1–3 นาที' }),
+      h('div', { class: 'ask-btns' }, no, yes));
+    const d = h('dialog', { class: 'st-newdlg' }, form);
+    document.body.append(d);
+    return new Promise((resolve) => {
+      let res = null;
+      no.addEventListener('click', () => d.close());
+      form.addEventListener('submit', () => { if (topic.value.trim()) res = { topic: topic.value, genre: genre.value, visual: visual.value, panels: Number(panels.value), research: research.checked }; });
+      d.addEventListener('close', () => { d.remove(); resolve(res); });
+      d.showModal(); topic.focus();
+    });
+  }
+  $('st-topic').addEventListener('click', async () => {
+    const body = await topicForm();
+    if (!body) return;
+    guard($('st-topic'), async () => {
+      toast(body.research ? 'AI กำลังค้นข้อมูลและเขียนสตอรีบอร์ด… (1–3 นาที)' : 'AI กำลังเขียนสตอรีบอร์ด…');
+      const p = await api('POST', '/api/story/from-topic', body);
+      await loadList(p.project.id); tab = 'story'; render();
+      toast('สร้างโปรเจกต์แล้ว — คัดลอก prompt ตารางไปสร้างรูป แล้วแนบกลับ');
+    }, (e) => toast(e.message, true));
+  });
   $('st-fan').addEventListener('click', async () => {
     const body = await fanForm();
     if (!body) return;
