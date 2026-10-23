@@ -534,7 +534,7 @@ function storyProjectBody(b, partial = false) {
     out.look = JSON.stringify(look);
   }
   if (b.generator !== undefined) {
-    if (!story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ต้องเป็น flow | chatgpt | meta');
+    if (!story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ไม่ถูกต้อง');
     out.generator = b.generator;
   }
   if (b.media !== undefined) {
@@ -546,22 +546,35 @@ function storyProjectBody(b, partial = false) {
 // สร้างโปรเจกต์เรื่องจากสคริปต์ที่แยกแล้ว (ใช้ร่วมกันโดย "นำเข้า prompt" และ "แฟนบอลสายฮา")
 function createFromScript(b, r, text) {
   const media = b.media === 'image' ? 'image' : 'video';
-  if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ต้องเป็น flow | chatgpt | meta');
+  if (b.generator !== undefined && !story.GENERATORS.includes(b.generator)) throw new HttpError(400, `generator ต้องเป็น ${story.GENERATORS.join(' | ')}`);
   const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 150) : r.title;
   const per = story.PER_IMAGE.includes(Number(b.per_image)) ? Number(b.per_image) : 1;
-  const p = story.createProject({ title, premise: text.replace(/\r\n/g, '\n').trim().slice(0, 30000), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator, per_image: per });
-  if (Array.isArray(b.sources) && b.sources.length) story.updateProject(p.id, { sources: JSON.stringify(b.sources.slice(0, 40).map((url) => ({ title: '', url: String(url).slice(0, 500), note: '' }))) });
-  story.updateProject(p.id, { look: JSON.stringify(r.look) });
-  const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
-  for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
-  story.rebuildPrompts(p.id);
-  return { ...story.getProject(p.id), warnings: r.warnings };
+  const sources = (Array.isArray(b.sources) ? b.sources : []).filter((u) => typeof u === 'string' && /^https?:\/\/\S+$/i.test(u)).slice(0, 40)
+    .map((url) => ({ title: '', url: url.slice(0, 500), note: '' }));
+  // ทั้งก้อนเป็นธุรกรรมเดียว: ถ้าขั้นไหนล้ม ไม่ทิ้งโปรเจกต์ที่สร้างค้างครึ่งทาง
+  db.handle.exec('BEGIN');
+  try {
+    const p = story.createProject({ title, premise: text.replace(/\r\n/g, '\n').trim().slice(0, 30000), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator, per_image: per });
+    story.updateProject(p.id, { look: JSON.stringify(r.look), ...(sources.length ? { sources: JSON.stringify(sources) } : {}) });
+    const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
+    for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
+    story.rebuildPrompts(p.id);
+    db.handle.exec('COMMIT');
+    return { ...story.getProject(p.id), warnings: r.warnings };
+  } catch (e) { db.handle.exec('ROLLBACK'); throw e; }
 }
 function mustProject(id) { const p = story.getProjectRow(id); if (!p) throw new HttpError(404, 'ไม่พบโปรเจกต์'); return p; }
 
 const routes = [
   ['GET', /^\/api\/story\/projects$/, async () => story.listProjects()],
-  ['POST', /^\/api\/story\/projects$/, async (req) => story.createProject(storyProjectBody(await readBody(req)))],
+  ['POST', /^\/api\/story\/projects$/, async (req) => {
+    const f = storyProjectBody(await readBody(req));
+    const p = story.createProject(f);
+    // createProject รับแค่บางฟิลด์ — ฟิลด์ที่ตรวจแล้วแต่ไม่ได้ใช้ (โทนภาพ/สไตล์คำบรรยาย) ต้องบันทึกต่อ ไม่งั้นหายเงียบ ๆ
+    const rest = {};
+    for (const k of ['look', 'narr_tone']) if (f[k] !== undefined) rest[k] = f[k];
+    return Object.keys(rest).length ? story.updateProject(p.id, rest) : p;
+  }],
   // นำเข้า prompt หนังสั้นสำเร็จรูป (SCENE n — … (a–bs)) → โปรเจกต์ + ตัวละคร + ช็อตตามต้นฉบับ ไม่ใช้ AI; dry=true คืนผลแยกให้ดูก่อนโดยไม่บันทึก
   ['POST', /^\/api\/story\/import$/, async (req) => {
     const b = await readBody(req);

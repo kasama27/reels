@@ -924,9 +924,10 @@
   $('st-new2').addEventListener('click', () => $('st-new').click());
 
   // นำเข้า prompt สำเร็จรูป: วางทั้งก้อน → ตรวจ (dry-run แสดงช็อต/บทพูด/คำเตือน) → นำเข้า ไม่ใช้ AI บทพูดไทยคงตามต้นฉบับ
-  function importForm() {
+  function importForm(init) {
     const ta = h('textarea', { rows: 12, spellcheck: false, placeholder: 'วาง prompt ทั้งก้อน เช่น\n“ชื่อเรื่อง”\nStyle: …\nCharacter consistency:\n* ชื่อ: คำอธิบาย\nSCENE 1 — ARRIVAL (0–10s)\n…' });
     const media = h('select', { 'aria-label': 'แบบงาน' }, h('option', { value: 'video', textContent: '🎬 วิดีโอสั้นต่อช็อต' }), h('option', { value: 'image', textContent: '🖼 ภาพนิ่งต่อช็อต' }));
+    if (init) { ta.value = init.text; media.value = init.media; } // เปิดซ้ำหลังล้ม: คืนข้อความที่วางไว้
     const out = h('div', { class: 'hint', role: 'status' });
     const check = h('button', { class: 'btn', type: 'button', textContent: 'ตรวจก่อน' });
     const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
@@ -952,21 +953,18 @@
       d.showModal(); ta.focus();
     });
   }
-  const runImport = async (btn) => {
-    const body = await importForm();
-    if (!body) return;
-    guard(btn, async () => {
-      const p = await api('POST', '/api/story/import', body);
-      await loadList(p.project.id); tab = 'story'; render();
-      toast(p.warnings?.length ? `นำเข้าแล้ว — ${p.warnings.join(' / ')}` : 'นำเข้า prompt แล้ว — ตรวจช็อตแล้วแนบรูป/คลิปต่อได้เลย');
-    }, (e) => toast(e.message, true));
-  };
+  const runImport = (btn) => createFlow(btn, importForm, async (body) => {
+    const p = await api('POST', '/api/story/import', body);
+    await loadList(p.project.id); tab = 'story'; render();
+    toast(p.warnings?.length ? `นำเข้าแล้ว — ${p.warnings.join(' / ')}` : 'นำเข้า prompt แล้ว — ตรวจช็อตแล้วแนบรูป/คลิปต่อได้เลย');
+  });
   // คอนเทนต์แฟนบอลสายฮา: ผลบอล + มุก → AI เขียนสคริปต์ล้อเลียน → โปรเจกต์พร้อมตัวละคร/ช็อต (ตัวละครสมมติ ไม่ใช้ชื่อ/หน้าบุคคลจริง)
-  function fanForm() {
-    const match = h('input', { maxLength: 500, placeholder: 'เช่น แมนยู 1–4 โคโม่ (ศึกยูซีแอล) · ทีมแดงยิงตัวเองซ้ำ ๆ', autocomplete: 'off' });
+  function fanForm(init) {
+    const match = h('input', { maxLength: 500, placeholder: 'เช่น แมนยู 1–4 โคโม่ (ศึกยูซีแอล) · ทีมแดงยิงตัวเองซ้ำ ๆ', autocomplete: 'off', required: true });
     const notes = h('textarea', { rows: 3, maxLength: 1000, placeholder: 'มุก/ไอเดียที่อยากให้เล่น (ไม่ใส่ก็ได้) เช่น ล้อเรื่อง “ทริปอิตาลี” “4 เม็ด”' });
     const total = h('select', { 'aria-label': 'ความยาว' }, ...[[45, '45 วิ'], [60, '60 วิ'], [90, '90 วิ']].map(([v, t]) => h('option', { value: v, textContent: t, selected: v === 60 })));
     const media = h('select', { 'aria-label': 'แบบงาน' }, h('option', { value: 'image', textContent: '🖼 ภาพนิ่งต่อช็อต (เร็ว กันลิขสิทธิ์)' }), h('option', { value: 'video', textContent: '🎬 วิดีโอสั้นต่อช็อต' }));
+    if (init) { match.value = init.match; notes.value = init.notes; total.value = String(init.total); media.value = init.media; }
     const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
     const yes = h('button', { class: 'btn primary', type: 'submit', textContent: '⚽ เขียนสคริปต์ + สร้างโปรเจกต์' });
     const form = h('form', { method: 'dialog', class: 'ask st-newform' },
@@ -986,13 +984,14 @@
     });
   }
   // สร้างจากหัวข้อ: หัวข้อ + แนวเรื่อง + แนวภาพ + จำนวนช่อง (+ค้นข้อมูลจริง) → โปรเจกต์ภาพนิ่งแบบตาราง 1 รูป = N ช่อง
-  function topicForm() {
-    const topic = h('input', { maxLength: 300, placeholder: 'เช่น ข่าวพันธุ์กะเพราคุ้มครอง 4 สายพันธุ์ · แมนยู 1–4 โคโม่', autocomplete: 'off' });
+  function topicForm(init) {
+    const topic = h('input', { maxLength: 300, placeholder: 'เช่น ข่าวพันธุ์กะเพราคุ้มครอง 4 สายพันธุ์ · แมนยู 1–4 โคโม่', autocomplete: 'off', required: true });
     const sel = (opts, val) => h('select', {}, ...opts.map(([v, t]) => h('option', { value: v, textContent: t, selected: v === val })));
     const genre = sel([['parody', '😂 ล้อเลียน/เสียดสีสายฮา'], ['newsfun', '📰 ข่าวเล่าแบบฮา'], ['spoil', '🎬 สปอยเรื่อง'], ['explain', '💡 ความรู้/อธิบายง่าย']], 'parody');
     const visual = sel([['cartoon', '🎨 การ์ตูนคาแรกเตอร์'], ['realistic', '📷 ภาพคนสมจริง (คนสมมติ ไม่ใช่บุคคลจริง)'], ['anime', '🌸 อนิเมะ'], ['stickman', '⚪ สติกแมน']], 'cartoon');
     const panels = sel([['4', '4 ช่อง (2×2 คมสุด)'], ['6', '6 ช่อง (2×3)'], ['12', '12 ช่อง (3×4 ภาพเล็ก)']], '6');
     const research = h('input', { type: 'checkbox', checked: true });
+    if (init) { topic.value = init.topic; genre.value = init.genre; visual.value = init.visual; panels.value = String(init.panels); research.checked = init.research; }
     const no = h('button', { class: 'btn ghost', type: 'button', textContent: 'ยกเลิก' });
     const yes = h('button', { class: 'btn primary', type: 'submit', textContent: '✨ เขียนสตอรีบอร์ด + สร้างโปรเจกต์' });
     const form = h('form', { method: 'dialog', class: 'ask st-newform' },
@@ -1011,16 +1010,23 @@
       d.showModal(); topic.focus();
     });
   }
-  $('st-topic').addEventListener('click', async () => {
-    const body = await topicForm();
-    if (!body) return;
-    guard($('st-topic'), async () => {
-      toast(body.research ? 'AI กำลังค้นข้อมูลและเขียนสตอรีบอร์ด… (1–3 นาที)' : 'AI กำลังเขียนสตอรีบอร์ด…');
-      const p = await api('POST', '/api/story/from-topic', body);
-      await loadList(p.project.id); tab = 'story'; render();
-      toast('สร้างโปรเจกต์แล้ว — คัดลอก prompt ตารางไปสร้างรูป แล้วแนบกลับ');
-    }, (e) => toast(e.message, true));
-  });
+  // ฟอร์ม → เรียก API → ถ้าล้มให้เปิดฟอร์มเดิมกลับมาพร้อมค่าที่กรอกไว้ (ไม่ต้องพิมพ์/วางใหม่); สำเร็จหรือกดยกเลิกแล้วจบ
+  async function createFlow(btn, formFn, run) {
+    let init = null;
+    for (;;) {
+      const body = await formFn(init);
+      if (!body) return;
+      const ok = await new Promise((resolve) => guard(btn, async () => { await run(body); resolve(true); }, (e) => { toast(e.message, true); resolve(false); }));
+      if (ok) return;
+      init = body;
+    }
+  }
+  $('st-topic').addEventListener('click', () => createFlow($('st-topic'), topicForm, async (body) => {
+    toast(body.research ? 'AI กำลังค้นข้อมูลและเขียนสตอรีบอร์ด… (1–3 นาที)' : 'AI กำลังเขียนสตอรีบอร์ด…');
+    const p = await api('POST', '/api/story/from-topic', body);
+    await loadList(p.project.id); tab = 'story'; render();
+    toast('สร้างโปรเจกต์แล้ว — คัดลอก prompt ตารางไปสร้างรูป แล้วแนบกลับ');
+  }));
   // ปุ่ม “＋ สร้างใหม่” ปุ่มเดียว → เลือกวิธีสร้างจากการ์ด (แนะนำให้ AI ทำเร็วสุดไว้บนสุด) แทนปุ่มกระจาย 4 ปุ่มบนแถบ
   const CREATE_WAYS = [
     ['st-topic', '✨', 'สร้างจากหัวข้อ', 'ใส่หัวข้อ + เลือกแนวเรื่อง/แนวภาพ → AI ค้นข้อมูลแล้วเขียนสตอรีบอร์ดรูปเดียวหลายช่อง', true],
@@ -1038,7 +1044,11 @@
         const b = h('button', { class: `st-way${rec ? ' rec' : ''}`, type: 'button' },
           h('span', { class: 'st-way-ico', textContent: ico }),
           h('span', {}, h('b', { textContent: name + (rec ? ' · แนะนำ' : '') }), h('small', { textContent: desc })));
-        b.addEventListener('click', () => { d.close(); $(id).click(); });
+        b.addEventListener('click', () => {
+          // ปุ่มจริงที่ซ่อนอยู่ถูก disable ระหว่างงาน AI — .click() ที่สั่งจากโค้ดจะไม่ทำอะไร จึงต้องบอกผู้ใช้แทนการปิดเมนูเงียบ ๆ
+          if ($(id).disabled) { toast('วิธีนี้กำลังสร้างอยู่ — รอให้เสร็จก่อน', true); return; }
+          d.close(); $(id).click();
+        });
         return b;
       }),
       h('div', { class: 'ask-btns' }, close)));
@@ -1048,16 +1058,12 @@
   }
   $('st-create').addEventListener('click', openCreateMenu);
   $('st-create2').addEventListener('click', openCreateMenu);
-  $('st-fan').addEventListener('click', async () => {
-    const body = await fanForm();
-    if (!body) return;
-    guard($('st-fan'), async () => {
-      toast('AI กำลังเขียนสคริปต์สายฮา… (~1 นาที)');
-      const p = await api('POST', '/api/story/fan-comedy', body);
-      await loadList(p.project.id); tab = 'story'; render();
-      toast(p.warnings?.length ? `สร้างแล้ว — ${p.warnings.join(' / ')}` : 'สร้างโปรเจกต์สายฮาแล้ว — ตรวจบทพูดแล้วสร้างรูปต่อได้เลย');
-    }, (e) => toast(e.message, true));
-  });
+  $('st-fan').addEventListener('click', () => createFlow($('st-fan'), fanForm, async (body) => {
+    toast('AI กำลังเขียนสคริปต์สายฮา… (~1 นาที)');
+    const p = await api('POST', '/api/story/fan-comedy', body);
+    await loadList(p.project.id); tab = 'story'; render();
+    toast(p.warnings?.length ? `สร้างแล้ว — ${p.warnings.join(' / ')}` : 'สร้างโปรเจกต์สายฮาแล้ว — ตรวจบทพูดแล้วสร้างรูปต่อได้เลย');
+  }));
   $('st-import').addEventListener('click', () => runImport($('st-import')));
   $('st-import2').addEventListener('click', () => runImport($('st-import2')));
   $('st-del').addEventListener('click', () => guard($('st-del'), async () => {
