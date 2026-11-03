@@ -22,8 +22,16 @@ const cli = require('./lib/claude-cli');
 const feeds = require('./lib/feeds');
 const brandLib = require('./lib/brand');
 const story = require('./lib/story');
+const series = require('./lib/series');
+// รูปของโปรเจกต์เปลี่ยน → งานซีรีส์ที่ผูกอยู่ขยับ images ↔ render (นับแบบเดียวกับหน้าช็อต: มีไฟล์และไม่ถูกตีว่าไม่ผ่าน)
+function syncJob(pid) {
+  const sh = story.listShots(pid);
+  series.syncProgress(pid, sh.length, sh.filter((s) => s.video_file && s.status !== 'rejected').length);
+}
 const { parsePromptScript } = require('./lib/promptimport');
 const pondy = require('./lib/pondy');
+const pclip = require('./lib/productclip');
+const chn = require('./lib/channels'); // ช่องทางโพสต์ (หลายเพจ + YouTube) + ตารางโพสต์
 
 const feedCache = new Map(); // feedId -> { t, items }  (แคช 5 นาที ไม่ยิงเว็บข่าวถี่เกิน)
 
@@ -38,6 +46,11 @@ fs.mkdirSync(STORY_VIDEO_DIR, { recursive: true });
 const STORY_VIDEO_NAME = /^shot-\d+-\d+\.(mp4|webm|png|jpg|webp)$/; // ช็อตแนบได้ทั้งคลิปและภาพนิ่ง
 const STORY_MEDIA_TYPE = { mp4: 'video/mp4', webm: 'video/webm', png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
 const rmStoryVideo = (name) => { if (name && STORY_VIDEO_NAME.test(name)) fs.rmSync(path.join(STORY_VIDEO_DIR, name), { force: true }); };
+// คลิปสินค้า: วิดีโอดิบจาก Meta AI (ก่อนใส่ข้อความไทย) — หน้าเว็บเอาไปใส่ข้อความแล้วอัดเป็นคลิปจริงของคลังอีกที
+const PRAW_DIR = path.join(db.DATA_DIR, 'data', 'product-videos');
+fs.mkdirSync(PRAW_DIR, { recursive: true });
+const PRAW_NAME = /^praw-\d+-\d+\.(mp4|webm)$/;
+const rmRaw = (name) => { if (name && PRAW_NAME.test(name)) fs.rmSync(path.join(PRAW_DIR, name), { force: true }); };
 const MUSIC_DIR = path.join(db.DATA_DIR, 'music');
 fs.mkdirSync(MUSIC_DIR, { recursive: true });
 const MUSIC_EXT = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.aac': 'audio/aac' };
@@ -109,6 +122,10 @@ function clean(body, { requireTitle = false } = {}) {
     out.target_sec = n;
   }
   if (body.voice !== undefined) out.voice = body.voice ? 1 : 0;
+  if (body.narr_tone !== undefined) {
+    if (!story.NARR_TONES[body.narr_tone]) throw new HttpError(400, 'narr_tone ไม่รู้จัก');
+    out.narr_tone = body.narr_tone;
+  }
   if (body.music !== undefined) {
     const ok = MUSIC_PRESETS.includes(body.music) ||
       (typeof body.music === 'string' && body.music.startsWith('file:') && listMusic().includes(body.music.slice(5)));
@@ -116,8 +133,12 @@ function clean(body, { requireTitle = false } = {}) {
     out.music = body.music;
   }
   if (body.kind !== undefined) {
-    if (!['quick', 'story'].includes(body.kind)) throw new HttpError(400, 'kind ต้องเป็น quick | story');
+    if (!['quick', 'story', 'product'].includes(body.kind)) throw new HttpError(400, 'kind ต้องเป็น quick | story | product');
     out.kind = body.kind;
+  }
+  if (body.fb_comment !== undefined) {
+    if (typeof body.fb_comment !== 'string' || body.fb_comment.length > 1500) throw new HttpError(400, 'คอมเมนต์ต้องไม่เกิน 1500 ตัวอักษร');
+    out.fb_comment = body.fb_comment.trim();
   }
   if (requireTitle && !out.title) throw new HttpError(400, 'ต้องมี title');
   if (out.title === '') throw new HttpError(400, 'title ห้ามว่าง');
@@ -144,7 +165,11 @@ function cleanProduct(b, create) {
     if (typeof b[k] !== 'string' || b[k].length > max) throw new HttpError(400, `${k} ต้องเป็นข้อความไม่เกิน ${max} ตัวอักษร`);
     out[k] = b[k].trim();
   };
-  str('name', 150); str('url', 500); str('tags', 200); str('note', 300);
+  str('name', 150); str('url', 500); str('tags', 200); str('note', 300); str('brand', 80); str('clip_name', 60); str('say', 120); str('shop', 80);
+  if (b.image !== undefined) { // รูปสินค้าจริง = ไฟล์ที่อัปโหลดผ่าน /api/images/upload แล้ว ('' = ลบรูป)
+    if (b.image !== '' && (typeof b.image !== 'string' || !IMG_NAME.test(b.image) || !fs.existsSync(path.join(IMG_DIR, b.image)))) throw new HttpError(400, 'รูปสินค้าไม่ถูกต้อง — อัปโหลดใหม่');
+    out.image = b.image;
+  }
   if (b.sales !== undefined) {
     const n = Number(b.sales === '' ? 0 : b.sales);
     if (!Number.isInteger(n) || n < 0 || n > 1e9) throw new HttpError(400, 'ยอดขายต้องเป็นจำนวนเต็ม 0 ขึ้นไป');
@@ -242,6 +267,10 @@ async function recommend(clip, mode) {
   return { mode, message: r.message, picks: withProduct(r.picks) };
 }
 
+// แนบรายการช่องทางที่โพสต์แล้วให้คลิป (posts: [{channel_id, posted_at, url}])
+function withPosts(r) { const m = chn.postsFor(r.items.map((c) => c.id)); r.items = r.items.map((c) => ({ ...c, posts: m.get(c.id) || [] })); return r; }
+const withPostsOne = (c) => ({ ...c, posts: chn.postsFor([c.id]).get(c.id) || [] });
+
 function mustGet(id) {
   const clip = db.get(id);
   if (!clip) throw new HttpError(404, 'ไม่พบคลิป');
@@ -257,11 +286,12 @@ function rmImages(clip) {
   let files = [];
   try { files = JSON.parse(clip.images || '[]').map((p) => p.file); } catch { /* ข้อมูลเสีย */ }
   if (!files.length) return;
-  const others = new Set();
+  const others = db.productImages(); // รูปสินค้าในคลังสินค้าห้ามลบตามคลิป
   for (const c of db.list({ limit: 100000 }).items) {
     if (c.id === clip.id) continue;
     try { for (const p of JSON.parse(c.images || '[]')) others.add(p.file); } catch { /* ข้าม */ }
   }
+  others.add(pclip.load().typoRef);
   for (const f of files) if (IMG_NAME.test(f) && !others.has(f)) fs.rmSync(path.join(IMG_DIR, f), { force: true });
 }
 
@@ -287,12 +317,13 @@ async function saveClipImage(req) {
 }
 
 // แนบคลิปให้ช็อต: เขียนลงไฟล์ตามสตรีม (จำกัด 300MB) ตรวจลายเซ็น mp4/webm จริง แทนที่ไฟล์เดิมของช็อต
-async function saveShotVideo(req, id) {
+async function saveShotVideo(req, id, slot = 1) {
   const shot = story.getShot(id);
   if (!shot) throw new HttpError(404, 'ไม่พบช็อต');
   const type = (req.headers['content-type'] || '').split(';')[0].trim();
   const ext = { 'video/mp4': '.mp4', 'video/webm': '.webm', 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' }[type];
   if (!ext) throw new HttpError(415, 'รองรับเฉพาะ mp4/webm หรือรูป png/jpg/webp');
+  if (slot === 2 && !['.png', '.jpg', '.webp'].includes(ext)) throw new HttpError(415, 'รูปที่ 2 ต้องเป็น png/jpg/webp');
   const isImage = ['.png', '.jpg', '.webp'].includes(ext);
   const name = `shot-${id}-${Date.now()}${ext}`;
   const file = path.join(STORY_VIDEO_DIR, name);
@@ -318,9 +349,112 @@ async function saveShotVideo(req, id) {
     if (!sig) throw new HttpError(400, isImage ? 'ไฟล์ไม่ใช่รูปจริง' : 'ไฟล์ไม่ใช่วิดีโอ mp4/webm จริง');
     if (!story.getShot(id)) throw new HttpError(404, 'ไม่พบช็อต');
   } catch (e) { fs.rmSync(file, { force: true }); throw e; }
+  if (slot === 2) { rmStoryVideo(shot.video_file2); story.setShotVideo2(id, name); return story.getProject(shot.project_id); }
   rmStoryVideo(shot.video_file);
   story.setShotVideo(id, name);
+  syncJob(shot.project_id);
   return story.getProject(shot.project_id);
+}
+
+// ---------- คลิปสินค้า (Meta AI) ----------
+// แนบวิดีโอดิบจาก Meta AI ให้คลิปสินค้า: สตรีมลงไฟล์ (≤300MB) ตรวจลายเซ็น mp4/webm จริง แทนที่ไฟล์ดิบเดิม
+async function saveRawVideo(req, id) {
+  const clip = mustGet(id);
+  if (clip.kind !== 'product') throw new HttpError(400, 'คลิปนี้ไม่ใช่คลิปสินค้า');
+  const type = (req.headers['content-type'] || '').split(';')[0].trim();
+  const ext = { 'video/mp4': 'mp4', 'video/webm': 'webm' }[type];
+  if (!ext) throw new HttpError(415, 'รองรับเฉพาะวิดีโอ mp4/webm');
+  const name = `praw-${id}-${Date.now()}.${ext}`;
+  const file = path.join(PRAW_DIR, name);
+  const MAX = 300_000_000;
+  let size = 0;
+  try {
+    await new Promise((resolve, reject) => {
+      const ws = fs.createWriteStream(file);
+      req.on('data', (c) => { size += c.length; if (size > MAX) { reject(new HttpError(413, 'ไฟล์ใหญ่เกินไป')); ws.destroy(); req.destroy(); } });
+      req.on('error', reject); ws.on('error', reject); ws.on('finish', resolve);
+      req.pipe(ws);
+    });
+    if (size < 1000) throw new HttpError(400, 'ไฟล์ว่างหรือเล็กเกินไป');
+    const head = Buffer.alloc(12);
+    const fd = fs.openSync(file, 'r'); fs.readSync(fd, head, 0, 12, 0); fs.closeSync(fd);
+    const sig = ext === 'mp4' ? head.subarray(4, 8).toString('latin1') === 'ftyp' : head.readUInt32BE(0) === 0x1a45dfa3;
+    if (!sig) throw new HttpError(400, 'ไฟล์ไม่ใช่วิดีโอ mp4/webm จริง');
+    if (!db.get(id)) throw new HttpError(404, 'ไม่พบคลิป');
+  } catch (e) { fs.rmSync(file, { force: true }); throw e; }
+  rmRaw(db.get(id).raw_video);
+  // วิดีโอดิบใหม่ = ต้องใส่ข้อความ/อัดใหม่ — ล้างไฟล์คลิปจริงเดิม (ถ้ามี) ให้กลับเป็นร่างรอทำต่อ
+  const cur = db.get(id);
+  if (cur.video_file) { rmVideo(cur); fs.rmSync(thumbPath(id), { force: true }); }
+  return db.update(id, { raw_video: name, video_file: null, duration: null, status: 'draft', error: null, posted_at: null, fb_url: null });
+}
+
+// สินค้า → ข้อมูลที่ส่งให้ Meta AI (prompt เติมใหม่ทุกครั้ง ตามเทมเพลต/ตั้งค่าล่าสุด) + รูปที่ต้องแนบ
+function productBrief(p) {
+  return [`สินค้า: ${p.name}`, p.brand ? `แบรนด์: ${p.brand}` : '', p.tags ? `แท็ก: ${p.tags}` : '', p.note ? `โน้ต: ${p.note}` : ''].filter(Boolean).join('\n');
+}
+function productJob(clip) {
+  const p = clip.product_id ? db.getProduct(clip.product_id) : null;
+  const s = pclip.load();
+  let prompt = '';
+  if (p) prompt = pclip.fill(p, s);
+  else { try { prompt = JSON.parse(clip.video_prompts || '[]')[0]?.prompt || ''; } catch { /* ข้อมูลเสีย */ } }
+  const images = [];
+  if (p && p.image && fs.existsSync(path.join(IMG_DIR, p.image))) images.push({ file: p.image, label: 'รูปสินค้า' });
+  if (s.typoRef && fs.existsSync(path.join(IMG_DIR, s.typoRef))) images.push({ file: s.typoRef, label: 'อ้างอิงตัวอักษร' });
+  return { clip: { id: clip.id, title: clip.title }, product: p ? { id: p.id, name: p.name, clip_name: pclip.clipName(p), brand: p.brand, url: p.url } : null, prompt, images };
+}
+// คิวของส่วนเสริม: คลิปสินค้าที่ยังไม่มีวิดีโอดิบ เก่าสุดก่อน
+function productQueue() {
+  const all = db.handle.prepare("SELECT * FROM clips WHERE kind = 'product' ORDER BY created_at ASC, id ASC").all();
+  const todo = all.filter((c) => !c.raw_video && !c.video_file);
+  return { total: all.length, waiting: todo.length, done: all.length - todo.length, next: todo[0] ? productJob(todo[0]) : null };
+}
+
+// สินค้าที่หาเจอบน affiliate.shopee.co.th (ส่วนเสริม) → คลังสินค้า: ดาวน์โหลดรูปเก็บเอง กันซ้ำด้วย item id/ลิงก์ แล้วเข้าคิวคลิปสินค้า (ถ้าเลือก)
+const SHOPEE_IMG = /^https:\/\/([a-z0-9-]+\.)*(susercontent\.com|shopee\.co\.th|shopeemobile\.com)\//i;
+// ลิงก์แอฟฟิลิเอต: ลิงก์สั้น s.shopee.co.th/… หรือลิงก์ยาวที่เว็บแอฟฟิลิเอตแนบมากับข้อมูลสินค้า
+// (shopee.co.th/universal-link/… ที่มี utm_medium=affiliates และ utm_source=an_<รหัสบัญชี> — ตรวจกับเว็บจริงแล้ว 31 ต.ค.)
+function isAffUrl(u) {
+  if (/^https:\/\/(s\.shopee\.co\.th|shope\.ee|shp\.ee)\/\S+$/i.test(u)) return true;
+  try { const x = new URL(u); return x.protocol === 'https:' && x.hostname === 'shopee.co.th' && x.searchParams.get('utm_medium') === 'affiliates' && /^an_\d+$/.test(x.searchParams.get('utm_source') || ''); } catch { return false; }
+}
+async function importFound(b) {
+  const items = Array.isArray(b.items) ? b.items.slice(0, 100) : [];
+  if (!items.length) throw new HttpError(400, 'ไม่มีสินค้าที่เลือก');
+  const added = [], dup = [], failed = [], clipIds = [];
+  for (const it of items) {
+    const item_id = String(it.item_id || '').replace(/\D/g, '').slice(0, 20);
+    const name = String(it.name || '').replace(/\s+/g, ' ').trim().slice(0, 150);
+    const url = String(it.url || '').trim();
+    if (!name || !isAffUrl(url)) { failed.push({ name: name || item_id, why: 'ไม่มีลิงก์แอฟฟิลิเอต' }); continue; }
+    const have = (item_id && db.productByItem(item_id)) || db.handle.prepare('SELECT * FROM products WHERE url = ?').get(url);
+    let prod = have;
+    if (!have) {
+      let image = '';
+      if (it.image_url && SHOPEE_IMG.test(String(it.image_url))) {
+        try {
+          const img = await feeds.fetchImage(String(it.image_url), 'https://affiliate.shopee.co.th/');
+          const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[img.type] || 'jpg';
+          image = `${crypto.createHash('sha1').update(img.buf).digest('hex')}.${ext}`;
+          fs.writeFileSync(path.join(IMG_DIR, image), img.buf);
+        } catch { /* ไม่มีรูปก็ยังเก็บสินค้าได้ — ใส่รูปเองทีหลัง */ }
+      }
+      const bits = [it.price ? `ราคา ฿${it.price}` : '', it.commission ? `ค่าคอม ${it.commission}` : '', it.shop ? `ร้าน ${String(it.shop).slice(0, 60)}` : ''].filter(Boolean);
+      prod = db.addProduct({
+        name, url, item_id, image, src: 'shopee-aff', tags: String(it.keyword || '').slice(0, 200), note: bits.join(' · ').slice(0, 300),
+        shop: String(it.shop || '').replace(/\s+/g, ' ').trim().slice(0, 80), shop_id: String(it.shop_id || '').replace(/\D/g, '').slice(0, 20),
+        sales: Math.max(0, Math.min(1e9, Math.round(Number(it.sales) || 0))),
+      });
+      added.push(prod.id);
+    } else dup.push(have.id);
+    if (b.queue && prod && !(have && db.handle.prepare("SELECT 1 FROM clips WHERE kind = 'product' AND product_id = ?").get(prod.id))) {
+      const c = db.create({ title: pclip.clipName(prod), brief: productBrief(prod), source: prod.url, kind: 'product', product_id: prod.id, music: 'none', theme: 'dark' });
+      db.update(c.id, { video_prompts: JSON.stringify([{ prompt: pclip.fill(prod), note: 'Meta AI — คลิปแนะนำสินค้า 10 วิ' }]) });
+      clipIds.push(c.id);
+    }
+  }
+  return { added: added.length, duplicates: dup.length, failed, queued: clipIds.length, queue: productQueue().waiting };
 }
 
 // ---------- ส่วนเสริม Chrome (extension/) ----------
@@ -346,6 +480,107 @@ function extNext(pid) {
   };
 }
 
+// คลิปพร้อมโพสต์ถัดไป: คลิปสินค้าก่อน แล้วเก่าสุดก่อน (kind = กรองชนิดได้) — ใช้กับแผงโพสต์ของส่วนเสริม
+function postNext(kind, channelName, type = 'reel') {
+  if (type === 'photo') return photoNext(channelName);
+  // ช่องทาง (เช่น ?channel=Liem): คลิปที่จองไว้ในตารางวันนี้มาก่อน แล้วค่อยคลิปที่ยังไม่เคยลงช่องทางนี้ ตรงชนิดคลิปของช่องทาง
+  const ch = channelName ? chn.byName(channelName) : chn.list()[0] || null;
+  if (channelName && !ch) throw new HttpError(404, `ไม่พบช่องทาง “${channelName}” (ตั้งค่าที่แท็บตารางโพสต์ → ช่องทาง)`);
+  let ready = db.list({ sort: 'old', limit: 1000 }).items.filter((c) => c.video_file && (c.status === 'ready' || c.status === 'posted'));
+  if (ch) {
+    const done = new Set((chn.postsFor(ready.map((c) => c.id))) ? [...chn.postsFor(ready.map((c) => c.id))].filter(([, ps]) => ps.some((p) => p.channel_id === ch.id)).map(([id]) => id) : []);
+    const kinds = ch.kinds ? ch.kinds.split(',') : null;
+    ready = ready.filter((c) => !done.has(c.id) && (!kinds || kinds.includes(c.kind)));
+  } else ready = ready.filter((c) => c.status === 'ready');
+  if (kind) ready = ready.filter((c) => c.kind === kind);
+  ready.sort((a, b) => (a.kind === 'product' ? 0 : 1) - (b.kind === 'product' ? 0 : 1));
+  const booked = ch ? chn.nextBooked(ch.id, new Date(), 'reel') : null;
+  const c = (booked && ready.find((x) => x.id === booked.clip_id)) || ready[0];
+  let bytes = 0;
+  if (c) { try { bytes = fs.statSync(videoPath(c)).size; } catch { bytes = 0; } }
+  return {
+    remaining: ready.length,
+    channel: ch ? { id: ch.id, name: ch.name, kind: ch.kind } : null,
+    clip: c ? { id: c.id, title: c.title, kind: c.kind, caption: c.caption, hashtags: c.hashtags, fb_comment: c.fb_comment, duration: c.duration, bytes } : null,
+  };
+}
+
+// โพสต์รูปถัดไป (แผงโพสต์ในหน้า "สร้างโพสต์" ของ Business Suite): จองไว้ในตารางวันนี้ก่อน แล้วค่อยโพสต์รูปที่ยังไม่เคยลงช่องทางนี้
+const photoPath = (c) => (c && c.photo_file ? path.join(db.OUT_DIR, path.basename(c.photo_file)) : null);
+function photoNext(channelName) {
+  const ch = channelName ? chn.byName(channelName) : chn.list()[0] || null;
+  if (channelName && !ch) throw new HttpError(404, `ไม่พบช่องทาง “${channelName}”`);
+  let ready = db.list({ kind: 'photo', sort: 'old', limit: 1000 }).items.filter((c) => c.photo_file && (c.status === 'ready' || c.status === 'posted'));
+  if (ch) { const ps = chn.postsFor(ready.map((c) => c.id)); ready = ready.filter((c) => !(ps.get(c.id) || []).some((p) => p.channel_id === ch.id)); } else ready = ready.filter((c) => c.status === 'ready');
+  const booked = ch ? chn.nextBooked(ch.id, new Date(), 'photo') : null;
+  const c = (booked && ready.find((x) => x.id === booked.clip_id)) || ready[0];
+  let bytes = 0;
+  if (c) { try { bytes = fs.statSync(photoPath(c)).size; } catch { bytes = 0; } }
+  return {
+    remaining: ready.length, type: 'photo',
+    channel: ch ? { id: ch.id, name: ch.name, kind: ch.kind } : null,
+    clip: c ? { id: c.id, title: c.title, kind: c.kind, badge: c.badge, caption: c.caption, hashtags: c.hashtags, fb_comment: c.fb_comment, bytes, photo: true } : null,
+  };
+}
+
+// ---------- สร้างโพสต์รูป (ร่าง) — หน้าเว็บวาดการ์ดแล้วอัปโหลดรูป (PUT /api/clips/:id/photo) ----------
+// style: news = การ์ดข่าว (ข่าวเด่น + บันเทิง วันนี้) | ask = โพสต์ชวนคุย | product = รูปสินค้าจากคลัง (ลิงก์ในคอมเมนต์แรก)
+async function createPhotoPosts(style, count) {
+  const n = Math.max(1, Math.min(6, Number(count) || 1));
+  const recent = db.list({ kind: 'photo', sort: 'new', limit: 60 }).items;
+  const made = [];
+  if (style === 'news') {
+    const items = await ai.writeNewsCards(n, { avoid: recent.filter((c) => c.badge === 'news').map((c) => c.title) });
+    for (const it of items) {
+      let images = [];
+      try {
+        const list = (await feeds.readImages(it.url)).images;
+        for (const cand of [...list.filter((c) => c.from !== 'page'), ...list].slice(0, 8)) {
+          try {
+            const img = await feeds.fetchImage(cand.url, it.url);
+            if (img.buf.length < 25_000) continue;
+            const file = `${crypto.createHash('sha1').update(img.buf).digest('hex')}.${img.ext}`;
+            fs.writeFileSync(path.join(IMG_DIR, file), img.buf);
+            images = [{ file, credit: it.outlet || new URL(it.url).hostname.replace(/^www\./, ''), src: cand.url }];
+            break;
+          } catch { /* ลองรูปถัดไป */ }
+        }
+      } catch { /* ไม่มีรูป → การ์ดพื้นสี */ }
+      const caption = `${it.caption}\n\nที่มา: ${it.outlet || new URL(it.url).hostname}`;
+      made.push(db.create({ title: it.headline, brief: it.headline, caption, hashtags: it.hashtags, source: it.url, images: JSON.stringify(images), badge: 'news', kind: 'photo' }));
+    }
+  } else if (style === 'ask') {
+    const items = await ai.writeAskPosts(n, { avoid: recent.filter((c) => c.badge === 'ask').map((c) => c.brief) });
+    for (const it of items) made.push(db.create({ title: it.text, brief: it.text, caption: it.caption, hashtags: it.hashtags, badge: 'ask', kind: 'photo' }));
+  } else if (style === 'product') {
+    // สินค้าที่มีรูป เรียงขายดี ยังไม่เคยทำโพสต์รูป
+    const used = new Set(recent.filter((c) => c.badge === 'product').map((c) => c.product_id));
+    const pool = db.listProducts({ sort: 'sales', limit: 200 }).items.filter((p) => p.image && !used.has(p.id));
+    for (const p of pool.slice(0, n)) {
+      const post = await ai.writeProductPost(p, pclip.clipName(p));
+      const price = /฿|บาท/.test(p.note || '') ? '' : '';
+      made.push(db.create({ title: pclip.clipName(p), brief: pclip.clipName(p), caption: post.caption, hashtags: post.hashtags, fb_comment: post.fb_comment, images: JSON.stringify([{ file: p.image, credit: '' }]), badge: 'product', kind: 'photo', product_id: p.id, source: price }));
+    }
+    if (!made.length) throw new HttpError(400, 'ไม่มีสินค้าที่มีรูปและยังไม่เคยทำโพสต์รูป — เพิ่มสินค้าก่อน');
+  } else throw new HttpError(400, 'แบบโพสต์รูปไม่ถูกต้อง (news | ask | product)');
+  return made;
+}
+async function savePhoto(req, id) {
+  const clip = mustGet(id);
+  if (clip.kind !== 'photo') throw new HttpError(400, 'ไม่ใช่โพสต์รูป');
+  const type = (req.headers['content-type'] || '').split(';')[0].trim();
+  if (type !== 'image/jpeg') throw new HttpError(415, 'รูปโพสต์ต้องเป็น image/jpeg');
+  const chunks = []; let size = 0;
+  for await (const c of req) { size += c.length; if (size > 8_000_000) throw new HttpError(413, 'รูปใหญ่เกินไป'); chunks.push(c); }
+  const buf = Buffer.concat(chunks);
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) throw new HttpError(400, 'ไม่ใช่ไฟล์ JPEG');
+  const old = photoPath(clip);
+  const file = `photo-${id}-${Date.now()}.jpg`;
+  fs.writeFileSync(path.join(db.OUT_DIR, file), buf);
+  if (old) fs.rmSync(old, { force: true });
+  return db.update(id, { photo_file: file, status: clip.status === 'posted' ? 'posted' : 'ready', error: null });
+}
+
 async function handleExt(req, res, url) {
   extAuth(req);
   const p = url.pathname;
@@ -353,10 +588,63 @@ async function handleExt(req, res, url) {
   if (p === '/ext/projects' && req.method === 'GET') return send(res, 200, story.listProjects().map((x) => ({ id: x.id, title: x.title, shots: x.shots, done: x.done })));
   let m = /^\/ext\/projects\/(\d+)\/next$/.exec(p);
   if (m && req.method === 'GET') return send(res, 200, extNext(+m[1]));
+  // คลิปสินค้า: คิวถัดไป / รูปที่ต้องแนบ (เฉพาะรูปสินค้าในคลัง + รูปอ้างอิงตัวอักษร) / ส่งวิดีโอดิบกลับ
+  if (p === '/ext/products/next' && req.method === 'GET') return send(res, 200, productQueue());
+  // หาสินค้าบนเว็บแอฟฟิลิเอต: item id ไหนมีในคลังแล้ว / เพิ่มสินค้าที่ติ๊ก (ดึงรูปเก็บเอง) + เข้าคิวคลิปสินค้า
+  if (p === '/ext/products/known' && req.method === 'POST') {
+    const b = await readBody(req);
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => /^\d{1,20}$/.test(x)).slice(0, 500);
+    return send(res, 200, { known: [...db.knownItems(ids)] });
+  }
+  if (p === '/ext/products/import' && req.method === 'POST') return send(res, 200, await importFound(await readBody(req, 2_000_000)));
+  m = /^\/ext\/img\/([0-9a-f]{40}\.(jpg|png|webp))$/.exec(p);
+  if (m && req.method === 'GET') {
+    if (!db.productImages().has(m[1]) && pclip.load().typoRef !== m[1]) throw new HttpError(404, 'ไม่พบรูป');
+    return serveFile(res, path.join(IMG_DIR, m[1]), { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[m[2]]);
+  }
+  m = /^\/ext\/clips\/(\d+)\/raw$/.exec(p);
+  if (m && req.method === 'PUT') { await saveRawVideo(req, +m[1]); return send(res, 200, productQueue()); }
   m = /^\/ext\/shots\/(\d+)\/video$/.exec(p);
   if (m && req.method === 'PUT') {
     const proj = await saveShotVideo(req, +m[1]);
     return send(res, 200, { ok: true, ...extNext(proj.project.id) });
+  }
+  // โพสต์ลงเพจ (Meta Business Suite) — แผง "โพสต์" ของส่วนเสริม: คลิปพร้อมโพสต์ถัดไป / ไฟล์วิดีโอ (Range, ดึงทีละชิ้น) / บันทึกว่าโพสต์แล้ว
+  if (p === '/ext/post/next' && req.method === 'GET') return send(res, 200, postNext(url.searchParams.get('kind') || '', url.searchParams.get('channel') || '', url.searchParams.get('type') === 'photo' ? 'photo' : 'reel'));
+  m = /^\/ext\/clips\/(\d+)\/photo$/.exec(p);
+  if (m && req.method === 'GET') {
+    const f = photoPath(mustGet(+m[1]));
+    if (!f || !fs.existsSync(f)) throw new HttpError(404, 'ยังไม่มีรูปโพสต์');
+    return serveFile(res, f, 'image/jpeg');
+  }
+  // เควสจากหน้าสถานะเพจ (ส่วนเสริมอ่าน facebook.com/professional_dashboard/status) — channel = ชื่อเพจ ไม่ระบุ = เพจ Facebook ช่องแรก
+  if (p === '/ext/quests' && req.method === 'POST') {
+    const b = await readBody(req);
+    const ch = (b.channel && chn.byName(b.channel)) || chn.list().find((c) => c.kind === 'fb' && c.active);
+    if (!ch) throw new HttpError(404, 'ยังไม่มีช่องทางเพจ Facebook');
+    return send(res, 200, chn.setQuests(ch.id, b));
+  }
+  m = /^\/ext\/clips\/(\d+)\/video$/.exec(p);
+  if (m && req.method === 'GET') {
+    const f = videoPath(mustGet(+m[1]));
+    if (!f || !fs.existsSync(f)) throw new HttpError(404, 'ยังไม่มีไฟล์คลิป');
+    return serveRange(req, res, f, 'video/mp4');
+  }
+  m = /^\/ext\/clips\/(\d+)\/cover$/.exec(p);
+  if (m && req.method === 'GET') {
+    mustGet(+m[1]);
+    if (!fs.existsSync(coverPath(+m[1]))) throw new HttpError(404, 'ยังไม่มีหน้าปก — กด “ใส่ข้อความ + ทำคลิปเสร็จ” ใหม่');
+    return serveFile(res, coverPath(+m[1]), 'image/jpeg');
+  }
+  m = /^\/ext\/clips\/(\d+)\/posted$/.exec(p);
+  if (m && req.method === 'POST') {
+    const clip = mustGet(+m[1]);
+    if (!clip.video_file) throw new HttpError(400, 'ยังไม่มีไฟล์คลิป');
+    const b = await readBody(req);
+    const fb = typeof b.fb_url === 'string' && /^https:\/\/([a-z0-9-]+\.)*facebook\.com\//i.test(b.fb_url.trim()) ? b.fb_url.trim().slice(0, 500) : '';
+    const chId = Number(b.channel_id) || (chn.list()[0] || {}).id;
+    if (chId) chn.markPosted(clip.id, chId, fb); else db.update(clip.id, { status: 'posted', posted_at: Date.now(), fb_url: fb || null });
+    return send(res, 200, withPostsOne(mustGet(clip.id)));
   }
   throw new HttpError(404, 'ไม่มี endpoint นี้');
 }
@@ -381,11 +669,25 @@ function serveRange(req, res, file, type) {
 function rmVideo(clip) {
   const p = videoPath(clip);
   if (p) fs.rmSync(p, { force: true });
+  const ph = clip && clip.photo_file ? path.join(db.OUT_DIR, path.basename(clip.photo_file)) : null;
+  if (ph) fs.rmSync(ph, { force: true });
 }
 
 const thumbPath = (id) => path.join(db.THUMB_DIR, `${id}.jpg`);
 
 // ภาพหน้าปก (JPEG เล็ก) ที่เบราว์เซอร์จับตอนเรนเดอร์ — ให้คลังโชว์รูปแทนการโหลดวิดีโอทุกอัน
+// หน้าปกเต็มขนาดของคลิป (ภาพขนาดย่อของ Reels) — data/thumbs/<id>-cover.jpg
+const coverPath = (id) => path.join(db.THUMB_DIR, `${id}-cover.jpg`);
+async function saveCover(req, id) {
+  mustGet(id);
+  if ((req.headers['content-type'] || '').split(';')[0].trim() !== 'image/jpeg') throw new HttpError(415, 'หน้าปกต้องเป็น image/jpeg');
+  const chunks = []; let size = 0;
+  for await (const c of req) { size += c.length; if (size > 4_000_000) throw new HttpError(413, 'หน้าปกใหญ่เกินไป'); chunks.push(c); }
+  const buf = Buffer.concat(chunks);
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) throw new HttpError(400, 'ไม่ใช่ไฟล์ JPEG');
+  fs.writeFileSync(coverPath(id), buf);
+  return { ok: true };
+}
 async function saveThumb(req, id) {
   mustGet(id);
   if ((req.headers['content-type'] || '').split(';')[0].trim() !== 'image/jpeg') throw new HttpError(415, 'หน้าปกต้องเป็น image/jpeg');
@@ -487,6 +789,24 @@ function cleanSettings(b) {
 }
 
 // ---------- โปรเจกต์เรื่อง ----------
+// ค่าของเทมเพลตตอนรวมคลิป (project.tpl): เก็บเฉพาะคีย์ที่รู้จัก ตัดความยาว กันข้อมูลแปลกเข้า DB
+function cleanTpl(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) throw new HttpError(400, 'tpl ต้องเป็น object');
+  const str = (v, max) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+  const grp = (g, keys) => Object.fromEntries(keys.map(([k, max]) => [k, str(g?.[k], max)]));
+  return {
+    epLabel: str(t.epLabel, 60), meterLabel: str(t.meterLabel, 30), meter: t.meter !== false,
+    cover: t.cover === false ? false : grp(t.cover, [['word', 20], ['title', 60], ['ep', 20], ['sub', 50]]),
+    coverAfter: Math.max(0, Math.min(20, Number.isInteger(+t.coverAfter) ? +t.coverAfter : 1)),
+    end: t.end === false ? false : grp(t.end, [['endTitle', 30], ['line', 120], ['credit', 200]]),
+  };
+}
+// ค่าเทมเพลต B ตั้งต้นจากซีรีส์: {ep} ในข้อความแทนด้วยเลขตอน; ไม่ได้ตั้งป้ายตอน/การ์ดปกไว้ ใช้ "EP.n · ชื่อซีรีส์" ให้
+function seriesTpl(s, ep) {
+  const t = JSON.parse(JSON.stringify(s.tpl || {}).split('{ep}').join(String(ep)));
+  const cover = t.cover === false ? false : { ep: `EP.${ep}`, title: s.title, ...(t.cover || {}) };
+  return cleanTpl({ ...t, epLabel: t.epLabel || `EP.${ep} · ${s.title}`, cover });
+}
 function storyProjectBody(b, partial = false) {
   const out = {};
   const s = (k, max) => {
@@ -533,6 +853,11 @@ function storyProjectBody(b, partial = false) {
     }
     out.look = JSON.stringify(look);
   }
+  if (b.template !== undefined) {
+    if (!story.TEMPLATES.includes(b.template)) throw new HttpError(400, `template ต้องเป็น ${story.TEMPLATES.join(' | ')}`);
+    out.template = b.template;
+  }
+  if (b.tpl !== undefined) out.tpl = JSON.stringify(cleanTpl(b.tpl));
   if (b.generator !== undefined) {
     if (!story.GENERATORS.includes(b.generator)) throw new HttpError(400, 'generator ไม่ถูกต้อง');
     out.generator = b.generator;
@@ -557,7 +882,12 @@ function createFromScript(b, r, text) {
     const p = story.createProject({ title, premise: text.replace(/\r\n/g, '\n').trim().slice(0, 30000), total_sec: r.total_sec, shot_sec: r.shot_sec, aspect: story.ASPECTS.includes(r.aspect) ? r.aspect : '9:16', media, generator: b.generator, per_image: per });
     story.updateProject(p.id, { look: JSON.stringify(r.look), ...(sources.length ? { sources: JSON.stringify(sources) } : {}) });
     const ids = new Map(r.characters.map((c) => [c.name, story.addEntity(p.id, { kind: 'character', name: c.name.slice(0, 80), desc: c.desc }).id]));
-    for (const s of r.shots) story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
+    const tb = b.template === 'b';
+    if (tb) story.updateProject(p.id, { template: 'b' });
+    for (const s of r.shots) {
+      const sh = story.addShot(p.id, { scene: s.scene, beat: s.action.slice(0, 300), action: s.action.slice(0, 600), narration: s.narration, duration: s.duration, character_ids: s.characters.map((n) => ids.get(n)).filter(Boolean) });
+      if (tb && (s.caption || s.sfx || s.meter)) story.updateShot(sh.id, { caption: s.caption, sfx_text: s.sfx, meter: s.meter });
+    }
     story.rebuildPrompts(p.id);
     db.handle.exec('COMMIT');
     return { ...story.getProject(p.id), warnings: r.warnings };
@@ -566,6 +896,17 @@ function createFromScript(b, r, text) {
 function mustProject(id) { const p = story.getProjectRow(id); if (!p) throw new HttpError(404, 'ไม่พบโปรเจกต์'); return p; }
 
 const routes = [
+  // ซีรีส์รายวัน: series → episode_jobs → publications (กติกาทั้งหมดอยู่ใน lib/series.js — ป้าย AI บังคับ, per_day, ไม่ซ้ำตอน)
+  ['GET', /^\/api\/series$/, async () => series.listSeries()],
+  ['POST', /^\/api\/series$/, async (req) => series.createSeries(await readBody(req))],
+  ['GET', /^\/api\/series\/(\d+)$/, async (req, m) => { const s = series.getSeries(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบซีรีส์'); return { ...s, jobs: series.listJobs(s.id) }; }],
+  ['PATCH', /^\/api\/series\/(\d+)$/, async (req, m) => series.updateSeries(+m[1], await readBody(req))],
+  ['DELETE', /^\/api\/series\/(\d+)$/, async (req, m) => { series.deleteSeries(+m[1]); return { ok: true }; }],
+  ['POST', /^\/api\/series\/(\d+)\/jobs$/, async (req, m) => { const b = await readBody(req); return series.startJob(+m[1], { force: b.force === true }); }],
+  ['PATCH', /^\/api\/jobs\/(\d+)$/, async (req, m) => series.updateJob(+m[1], await readBody(req))],
+  ['DELETE', /^\/api\/jobs\/(\d+)$/, async (req, m) => { series.deleteJob(+m[1]); return { ok: true }; }],
+  ['POST', /^\/api\/jobs\/(\d+)\/publications$/, async (req, m) => series.addPub(+m[1], (await readBody(req)).platform)],
+  ['PATCH', /^\/api\/publications\/(\d+)$/, async (req, m) => series.updatePub(+m[1], await readBody(req))],
   ['GET', /^\/api\/story\/projects$/, async () => story.listProjects()],
   ['POST', /^\/api\/story\/projects$/, async (req) => {
     const f = storyProjectBody(await readBody(req));
@@ -583,8 +924,23 @@ const routes = [
     let r;
     try { r = parsePromptScript(b.text); } catch (e) { throw new HttpError(400, e.message); }
     if (b.dry === true) return { title: r.title, total_sec: r.total_sec, characters: r.characters.length, shots: r.shots.map((s) => ({ scene: s.scene, duration: s.duration, narration: s.narration })), warnings: r.warnings };
-    return createFromScript(b, r, b.text);
+    const jobId = b.series_job_id === undefined ? null : Number(b.series_job_id);
+    if (jobId !== null && !Number.isInteger(jobId)) throw new HttpError(400, 'series_job_id ต้องเป็นจำนวนเต็ม');
+    // ตรวจงานก่อนสร้างโปรเจกต์ (กันสร้างค้างแล้วผูกไม่ได้)
+    if (jobId !== null) { const j = series.getJob(jobId); if (!j) throw new HttpError(404, 'ไม่พบงาน'); if (!['research', 'storyboard'].includes(j.status)) throw new HttpError(409, `งานอยู่ขั้น ${j.status} แล้ว`); }
+    const out = createFromScript(b, r, b.text);
+    if (jobId !== null) {
+      try {
+        out.job = series.linkProject(jobId, out.project.id, { total: out.shots.length, have: 0 });
+        const sr = series.getSeries(out.job.series_id);
+        story.updateProject(out.project.id, { template: 'b', tpl: JSON.stringify(seriesTpl(sr, out.job.ep_no)) });
+        out.project = story.getProjectRow(out.project.id);
+      } catch (e) { story.deleteProject(out.project.id); throw e; }
+    }
+    return out;
   }],
+  // รวมคลิปเสร็จ → งานซีรีส์ของโปรเจกต์นั้นเป็น ready (ไม่มีงานผูกอยู่ = ไม่ทำอะไร คืน job: null)
+  ['POST', /^\/api\/story\/projects\/(\d+)\/clip-done$/, async (req, m) => { mustProject(+m[1]); const b = await readBody(req); return { job: series.markReadyByProject(+m[1], Number(b.clip_id)) }; }],
   // สร้างจากหัวข้อ: หัวข้อ + แนวเรื่อง + แนวภาพ (+ค้นข้อมูลจริง) → AI เขียนสตอรีบอร์ดหลายช่อง → โปรเจกต์ภาพนิ่งแบบตาราง (1 รูป = N ช่อง) พร้อมไปสร้างรูป
   ['POST', /^\/api\/story\/from-topic$/, async (req) => {
     const b = await readBody(req);
@@ -593,10 +949,11 @@ const routes = [
     const panels = [4, 6, 12].includes(Number(b.panels)) ? Number(b.panels) : 6;
     const genre = ['parody', 'newsfun', 'spoil', 'explain'].includes(b.genre) ? b.genre : 'parody';
     const visual = ['cartoon', 'realistic', 'anime', 'stickman'].includes(b.visual) ? b.visual : 'cartoon';
-    const { text, sources } = await ai.writeTopicBoard({ topic, genre, visual, panels, research: b.research === true });
+    const template = b.template === 'b' ? 'b' : 'plain';
+    const { text, sources } = await ai.writeTopicBoard({ topic, genre, visual, panels, research: b.research === true, template });
     let r;
     try { r = parsePromptScript(text); } catch (e) { throw new HttpError(502, `AI เขียนสคริปต์ผิดรูปแบบ ลองใหม่อีกครั้ง (${e.message})`); }
-    return createFromScript({ media: 'image', generator: b.generator, per_image: panels, sources }, r, text);
+    return createFromScript({ media: 'image', generator: b.generator, per_image: panels, sources, template }, r, text);
   }],
   // คอนเทนต์แฟนบอลสายฮา: ผลบอล/มุก → AI เขียนสคริปต์ล้อเลียนรูปแบบเดียวกับนำเข้า → สร้างโปรเจกต์ทันที (สคริปต์เก็บในช่องเรื่องย่อ แก้ต่อได้)
   ['POST', /^\/api\/story\/fan-comedy$/, async (req) => {
@@ -692,6 +1049,7 @@ const routes = [
       prevState = s.state_after;
     }
     story.rebuildPrompts(p.id);
+    syncJob(p.id); // ช็อตเปลี่ยนทั้งชุด → งานตอนที่ผูกอยู่กลับไปขั้นทำรูป
     return story.getProject(p.id);
   }],
   // เขียนคำบรรยายใหม่ทุกช็อตตามสไตล์ของโปรเจกต์ — แก้แค่ narration (ช็อต/prompt/รูปที่แนบไว้คงเดิม)
@@ -704,12 +1062,12 @@ const routes = [
     return story.getProject(p.id);
   }],
   // ช็อต
-  ['POST', /^\/api\/story\/projects\/(\d+)\/shots$/, async (req, m) => { const p = mustProject(+m[1]); const s = story.addShot(p.id, {}); story.rebuildPrompts(p.id, s.id); return story.getProject(p.id); }],
+  ['POST', /^\/api\/story\/projects\/(\d+)\/shots$/, async (req, m) => { const p = mustProject(+m[1]); const s = story.addShot(p.id, {}); story.rebuildPrompts(p.id, s.id); syncJob(p.id); return story.getProject(p.id); }],
   ['PATCH', /^\/api\/story\/shots\/(\d+)$/, async (req, m) => {
     const cur = story.getShot(+m[1]);
     if (!cur) throw new HttpError(404, 'ไม่พบช็อต');
     const b = await readBody(req), f = {};
-    for (const [k, max] of [['scene', 80], ['beat', 300], ['action', 600], ['camera', 200], ['narration', 300], ['state_before', 300], ['state_after', 300], ['visible_text', 120], ['prompt', 3000], ['note', 500]]) {
+    for (const [k, max] of [['scene', 80], ['beat', 300], ['action', 600], ['camera', 200], ['narration', 300], ['state_before', 300], ['state_after', 300], ['visible_text', 120], ['prompt', 3000], ['note', 500], ['caption', 200], ['sfx_text', 30]]) {
       if (b[k] === undefined) continue;
       if (typeof b[k] !== 'string' || b[k].length > max) throw new HttpError(400, `${k} ยาวเกิน ${max}`);
       f[k] = b[k].trim();
@@ -723,6 +1081,15 @@ const routes = [
       if (!story.SHOT_STATUS.includes(b.status)) throw new HttpError(400, 'status ไม่รู้จัก');
       f.status = b.status;
     }
+    if (b.meter !== undefined) {
+      const n = Number(b.meter);
+      if (!Number.isInteger(n) || n < 0 || n > 5) throw new HttpError(400, 'meter ต้องเป็นจำนวนเต็ม 0–5 (0 = อัตโนมัติ)');
+      f.meter = n;
+    }
+    if (b.layout !== undefined) {
+      if (!story.LAYOUTS.includes(b.layout)) throw new HttpError(400, `layout ต้องเป็น ${story.LAYOUTS.join(' | ')}`);
+      f.layout = b.layout;
+    }
     const ents = new Map(story.listEntities(cur.project_id).map((e) => [e.id, e]));
     if (b.location_id !== undefined) {
       if (b.location_id !== null && ents.get(b.location_id)?.kind !== 'location') throw new HttpError(400, 'location_id ไม่ถูกต้อง');
@@ -734,12 +1101,14 @@ const routes = [
       f[k] = [...new Set(b[k])];
     }
     story.updateShot(cur.id, f);
+    if (f.status !== undefined) syncJob(cur.project_id); // ตีว่าไม่ผ่าน/กลับมาใช้ได้ เปลี่ยนจำนวนช็อตที่มีรูป
     // แก้ฟิลด์ที่เป็นส่วนประกอบของ prompt (และไม่ได้ส่ง prompt มาเอง) → ประกอบ prompt ใหม่ให้
     if (f.prompt === undefined && ['location_id', 'character_ids', 'prop_ids', 'action', 'camera', 'duration', 'state_before', 'state_after', 'visible_text'].some((k) => f[k] !== undefined)) story.rebuildPrompts(cur.project_id, cur.id);
     return story.getProject(cur.project_id);
   }],
-  ['DELETE', /^\/api\/story\/shots\/(\d+)$/, async (req, m) => { const s = story.getShot(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบช็อต'); rmStoryVideo(s.video_file); story.deleteShot(s.id); return story.getProject(s.project_id); }],
-  ['DELETE', /^\/api\/story\/shots\/(\d+)\/video$/, async (req, m) => { const s = story.getShot(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบช็อต'); rmStoryVideo(s.video_file); story.clearShotVideo(s.id); return story.getProject(s.project_id); }],
+  ['DELETE', /^\/api\/story\/shots\/(\d+)$/, async (req, m) => { const s = story.getShot(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบช็อต'); rmStoryVideo(s.video_file); rmStoryVideo(s.video_file2); story.deleteShot(s.id); syncJob(s.project_id); return story.getProject(s.project_id); }],
+  ['DELETE', /^\/api\/story\/shots\/(\d+)\/video2$/, async (req, m) => { const s = story.getShot(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบช็อต'); rmStoryVideo(s.video_file2); story.setShotVideo2(s.id, null); return story.getProject(s.project_id); }],
+  ['DELETE', /^\/api\/story\/shots\/(\d+)\/video$/, async (req, m) => { const s = story.getShot(+m[1]); if (!s) throw new HttpError(404, 'ไม่พบช็อต'); rmStoryVideo(s.video_file); story.clearShotVideo(s.id); syncJob(s.project_id); return story.getProject(s.project_id); }],
   ['POST', /^\/api\/story\/shots\/(\d+)\/move$/, async (req, m) => {
     const s = story.getShot(+m[1]);
     if (!s) throw new HttpError(404, 'ไม่พบช็อต');
@@ -823,6 +1192,8 @@ const routes = [
   ['GET', /^\/api\/status$/, async () => ({
     ffmpeg: await ffmpegOk(), ai: await ai.available(), aiProvider: cfg.aiProvider, model: cfg.model, themes: THEME_INFO, brand: brandLib.summary(), logo: fs.existsSync(LOGO_FILE) ? { v: Math.floor(fs.statSync(LOGO_FILE).mtimeMs) } : null,
     tts: await tts.available(), ttsProvider: cfg.ttsProvider, music: listMusic(),
+    // สไตล์เสียงพากย์ชุดเดียวทั้งโปรเจกต์ (คลิปเร็ว + เรื่องหลายช็อต/ซีรีส์) — เพิ่มใน story.NARR_TONES แล้วขึ้นให้เลือกทุกหน้า
+    tones: Object.entries(story.NARR_TONES).map(([id, t]) => ({ id, label: t.label })),
   })],
   // ข้อความต่อฉาก → WAV เสียงไทย (แคชตามข้อความ); คืนลิงก์ /tts/<hash>.wav ตามลำดับเดิม
   ['POST', /^\/api\/tts$/, async (req) => {
@@ -842,6 +1213,13 @@ const routes = [
     const target = clean({ target_sec: body.target_sec ?? 0 }).target_sec;
     return ai.researchTopic(topic, target);
   }],
+  // หัวข้อข่าว → AI ค้นข่าวล่าสุดจากหลายสำนัก → เนื้อข่าวต้นฉบับ + ลิงก์ที่มา (โหมดข่าว, ต้องใช้ Claude Code)
+  ['POST', /^\/api\/news\/find$/, async (req) => {
+    const body = await readBody(req);
+    const topic = typeof body.topic === 'string' ? body.topic.trim() : '';
+    if (topic.length < 2 || topic.length > 200) throw new HttpError(400, 'ใส่หัวข้อข่าว 2–200 ตัวอักษร');
+    return ai.findNews(topic);
+  }],
   ['POST', /^\/api\/extract$/, async (req) => {
     const body = await readBody(req, 8_000_000);
     const target = clean({ target_sec: body.target_sec ?? 0 }).target_sec;
@@ -857,8 +1235,11 @@ const routes = [
       sort: ['sales', 'posted'].includes(p.get('sort')) ? p.get('sort') : 'new',
       limit: Math.min(200, Math.max(1, Number(p.get('limit')) || 50)),
       offset: Math.max(0, Number(p.get('offset')) || 0),
+      shop: (p.get('shop') || '').trim().slice(0, 80),
     });
   }],
+  // ร้านค้าในคลังสินค้า + จำนวนสินค้าต่อร้าน (ไว้เลือกสินค้าจากร้าน)
+  ['GET', /^\/api\/products\/shops$/, async () => db.productShops()],
   // ---- ดึงสินค้าที่เคยลงคลิปจากแอป Pondy บนมือถือ (adb, อ่านอย่างเดียว) ----
   // รายการสินค้าที่ลงไว้ให้ผู้ใช้เลือกเอง (รวมหลายเครื่อง ใหม่สุดก่อน) พร้อมชนิดลิงก์ — ไม่ใช้ AI
   ['POST', /^\/api\/pondy\/browse$/, async (req) => {
@@ -985,8 +1366,8 @@ const routes = [
     if (!(sort in db.SORTS)) throw new HttpError(400, 'sort ไม่รู้จัก');
     const limit = Math.min(200, Math.max(1, Number(p.get('limit')) || 24));
     const offset = Math.max(0, Number(p.get('offset')) || 0);
-    const kind = p.get('kind'); if (kind && !['quick', 'story'].includes(kind)) throw new HttpError(400, 'kind ไม่รู้จัก');
-    return db.list({ status: p.get('status') || undefined, kind: kind || undefined, q: (p.get('q') || '').trim().slice(0, 100), sort, limit, offset });
+    const kind = p.get('kind'); if (kind && !['quick', 'story', 'product', 'photo'].includes(kind)) throw new HttpError(400, 'kind ไม่รู้จัก');
+    return withPosts(db.list({ status: p.get('status') || undefined, kind: kind || undefined, q: (p.get('q') || '').trim().slice(0, 100), sort, limit, offset }));
   }],
   ['POST', /^\/api\/clips$/, async (req) => db.create(clean(await readBody(req), { requireTitle: true }))],
   // ล้างคลิปที่ทำเครื่องหมาย "โพสต์แล้ว" ทั้งหมด (ลบไฟล์วิดีโอ/หน้าปกด้วย) — ไว้เคลียร์คลังหลังคัดลอกไปลงเสร็จ
@@ -996,13 +1377,14 @@ const routes = [
     for (const clip of items) {
       rmVideo(clip);
       rmImages(clip);
-      fs.rmSync(thumbPath(clip.id), { force: true });
+      fs.rmSync(thumbPath(clip.id), { force: true }); fs.rmSync(coverPath(clip.id), { force: true });
+      chn.forgetClip(clip.id);
       db.remove(clip.id);
       removed++;
     }
     return { removed };
   }],
-  ['GET', /^\/api\/clips\/(\d+)$/, async (req, m) => mustGet(+m[1])],
+  ['GET', /^\/api\/clips\/(\d+)$/, async (req, m) => withPostsOne(mustGet(+m[1]))],
   ['PATCH', /^\/api\/clips\/(\d+)$/, async (req, m) => {
     mustGet(+m[1]);
     return db.update(+m[1], clean(await readBody(req)));
@@ -1012,7 +1394,9 @@ const routes = [
     if (rendering.has(clip.id)) throw new HttpError(409, 'กำลังเรนเดอร์อยู่ รอให้เสร็จก่อน');
     rmVideo(clip);
     rmImages(clip);
-    fs.rmSync(thumbPath(clip.id), { force: true });
+    rmRaw(clip.raw_video);
+    fs.rmSync(thumbPath(clip.id), { force: true }); fs.rmSync(coverPath(clip.id), { force: true });
+    chn.forgetClip(clip.id);
     db.remove(clip.id);
     return { ok: true };
   }],
@@ -1040,17 +1424,87 @@ const routes = [
     return db.update(clip.id, await ai.writeCaption(clip));
   }],
   ['POST', /^\/api\/clips\/(\d+)\/render$/, async (req, m) => startRender(+m[1])],
+  // ---- คลิปสินค้า (Meta AI) ----
+  ['GET', /^\/api\/product-clips\/settings$/, async () => ({ ...pclip.load(), defaultTemplate: pclip.DEFAULT_TEMPLATE, queue: (({ total, waiting, done }) => ({ total, waiting, done }))(productQueue()) })],
+  ['PUT', /^\/api\/product-clips\/settings$/, async (req) => {
+    const b = await readBody(req), patch = {};
+    if (b.template !== undefined) { if (typeof b.template !== 'string' || b.template.length > 20000) throw new HttpError(400, 'เทมเพลตยาวเกินไป'); patch.template = b.template.trim() ? b.template : pclip.DEFAULT_TEMPLATE; }
+    if (b.overlay !== undefined) patch.overlay = !!b.overlay;
+    if (b.finish !== undefined) patch.finish = !!b.finish;
+    if (b.style !== undefined) patch.style = b.style === 'full' ? 'full' : 'compact';
+    if (b.coverAt !== undefined) { const v = Number(b.coverAt); if (!(v >= 0 && v <= 30)) throw new HttpError(400, 'วินาทีหน้าปกต้องอยู่ระหว่าง 0–30'); patch.coverAt = Math.round(v * 10) / 10; }
+    if (b.coverText !== undefined) patch.coverText = !!b.coverText;
+    if (b.typoRef !== undefined) {
+      if (b.typoRef !== '' && (typeof b.typoRef !== 'string' || !IMG_NAME.test(b.typoRef) || !fs.existsSync(path.join(IMG_DIR, b.typoRef)))) throw new HttpError(400, 'รูปอ้างอิงไม่ถูกต้อง — อัปโหลดใหม่');
+      patch.typoRef = b.typoRef;
+    }
+    return pclip.save(patch);
+  }],
+  // ตัวอย่าง prompt ของสินค้าหนึ่งชิ้น (ไว้ดู/คัดลอกเองโดยไม่ต้องสร้างคลิป)
+  ['GET', /^\/api\/product-clips\/preview\/(\d+)$/, async (req, m) => {
+    const p = db.getProduct(+m[1]); if (!p) throw new HttpError(404, 'ไม่พบสินค้า');
+    return { prompt: pclip.fill(p), clip_name: pclip.clipName(p) };
+  }],
+  // เลือกสินค้าจากคลัง → สร้างคลิปสินค้า (ร่าง) ทีละชิ้น เข้าคิวรอทำบน Meta AI ด้วยส่วนเสริม
+  ['POST', /^\/api\/product-clips$/, async (req) => {
+    const b = await readBody(req);
+    const ids = Array.isArray(b.product_ids) ? [...new Set(b.product_ids.map(Number))].filter((n) => Number.isInteger(n) && n > 0) : [];
+    if (!ids.length) throw new HttpError(400, 'เลือกสินค้าอย่างน้อย 1 ชิ้น');
+    if (ids.length > 100) throw new HttpError(400, 'เลือกได้ครั้งละไม่เกิน 100 ชิ้น');
+    const music = MUSIC_PRESETS.includes(b.music) || (typeof b.music === 'string' && b.music.startsWith('file:') && listMusic().includes(b.music.slice(5))) ? b.music : 'none';
+    const created = [], noImage = [], missing = [];
+    for (const id of ids) {
+      const p = db.getProduct(id);
+      if (!p) { missing.push(id); continue; }
+      if (!p.image) noImage.push(p.name);
+      const prompt = pclip.fill(p);
+      created.push(db.create({
+        title: pclip.clipName(p), brief: productBrief(p), source: p.url, kind: 'product', product_id: p.id, music, theme: 'dark',
+      }).id);
+      db.update(created[created.length - 1], { video_prompts: JSON.stringify([{ prompt, note: 'Meta AI — คลิปแนะนำสินค้า 10 วิ' }]) });
+    }
+    return { created: created.length, ids: created, noImage, missing: missing.length, queue: productQueue().waiting };
+  }],
+  // แคปชันเพจ + คอมเมนต์แรก (ลิงก์แอฟฟิลิเอต) + แฮชแท็ก ของคลิปสินค้า
+  ['POST', /^\/api\/clips\/(\d+)\/product-post$/, async (req, m) => {
+    const clip = mustGet(+m[1]);
+    const p = clip.product_id ? db.getProduct(clip.product_id) : null;
+    if (!p) throw new HttpError(400, 'คลิปนี้ไม่ได้ผูกกับสินค้าในคลัง (สินค้าอาจถูกลบไปแล้ว)');
+    return db.update(clip.id, await ai.writeProductPost(p, pclip.clipName(p)));
+  }],
   ['POST', /^\/api\/clips\/(\d+)\/posted$/, async (req, m) => {
     const clip = mustGet(+m[1]);
     if (!clip.video_file) throw new HttpError(400, 'ยังไม่มีไฟล์คลิป');
     const body = await readBody(req);
     const fb = typeof body.fb_url === 'string' ? body.fb_url.trim().slice(0, 500) : '';
-    return db.update(clip.id, { status: 'posted', posted_at: Date.now(), fb_url: fb || null });
+    // channel_id = ช่องทางที่โพสต์ (ไม่ระบุ = ช่องทางแรก เช่นเพจ Liem — ให้ปุ่มเดิมยังใช้ได้)
+    const chId = Number(body.channel_id) || (chn.list()[0] || {}).id;
+    if (!chId) return db.update(clip.id, { status: 'posted', posted_at: Date.now(), fb_url: fb || null });
+    chn.markPosted(clip.id, chId, fb);
+    return withPostsOne(mustGet(clip.id));
   }],
   ['POST', /^\/api\/clips\/(\d+)\/unposted$/, async (req, m) => {
     const clip = mustGet(+m[1]);
-    return db.update(clip.id, { status: clip.video_file ? 'ready' : 'draft', posted_at: null, fb_url: null });
+    const body = await readBody(req).catch(() => ({}));
+    const left = chn.unmarkPosted(clip.id, Number(body.channel_id) || null);
+    if (left) return withPostsOne(clip);
+    return withPostsOne(db.update(clip.id, { status: clip.video_file ? 'ready' : 'draft', posted_at: null, fb_url: null }));
   }],
+  // ---------- เควสเพจ + โพสต์รูป ----------
+  ['GET', /^\/api\/quests$/, async () => chn.quests()],
+  ['POST', /^\/api\/photo-posts$/, async (req) => { const b = await readBody(req); return createPhotoPosts(String(b.style || ''), b.count); }],
+  // ---------- ช่องทางโพสต์ ----------
+  ['GET', /^\/api\/channels$/, async () => { const today = chn.todayCounts(); return chn.list().map((c) => ({ ...c, today: today[c.id] || 0 })); }],
+  ['POST', /^\/api\/channels$/, async (req) => chn.create(await readBody(req))],
+  ['PATCH', /^\/api\/channels\/(\d+)$/, async (req, m) => chn.update(+m[1], await readBody(req))],
+  ['DELETE', /^\/api\/channels\/(\d+)$/, async (req, m) => { chn.remove(+m[1]); return { ok: true }; }],
+  // ---------- ตารางโพสต์ ----------
+  ['GET', /^\/api\/schedule$/, async (req, m, url) => chn.day(url.searchParams.get('day') || chn.dayKey(new Date()))],
+  ['GET', /^\/api\/schedule\/due$/, async () => chn.due()],
+  ['POST', /^\/api\/schedule$/, async (req) => chn.addSlot(await readBody(req))],
+  ['POST', /^\/api\/schedule\/autofill$/, async (req) => chn.autofill(String((await readBody(req)).day || chn.dayKey(new Date())))],
+  ['PATCH', /^\/api\/schedule\/(\d+)$/, async (req, m) => chn.updateSlot(+m[1], await readBody(req))],
+  ['DELETE', /^\/api\/schedule\/(\d+)$/, async (req, m) => { chn.removeSlot(+m[1]); return { ok: true }; }],
 ];
 
 // รับไฟล์คลิปที่เบราว์เซอร์เรนเดอร์ (PUT body ดิบ mp4/webm) เก็บลง output/ แล้วตั้งสถานะ ready
@@ -1188,13 +1642,28 @@ async function handleRequest(req, res) {
     if (sm && req.method === 'GET') return serveRange(req, res, path.join(STORY_VIDEO_DIR, sm[1]), STORY_MEDIA_TYPE[sm[2]]);
     const sv = /^\/api\/story\/shots\/(\d+)\/video$/.exec(url.pathname);
     if (sv && req.method === 'PUT') return send(res, 200, await saveShotVideo(req, +sv[1]));
+    const sv2 = /^\/api\/story\/shots\/(\d+)\/video2$/.exec(url.pathname);
+    if (sv2 && req.method === 'PUT') return send(res, 200, await saveShotVideo(req, +sv2[1], 2));
     if (url.pathname === '/brand/logo.png' && req.method === 'GET') return serveFile(res, LOGO_FILE, 'image/png');
     if (url.pathname === '/api/brand/logo' && req.method === 'PUT') return send(res, 200, await saveLogo(req));
 
     const th = /^\/thumb\/(\d+)\.jpg$/.exec(url.pathname);
     if (th && req.method === 'GET') return serveFile(res, thumbPath(+th[1]), 'image/jpeg');
+    const ph = /^\/photo\/(photo-\d+-\d+\.jpg)$/.exec(url.pathname);
+    if (ph && req.method === 'GET') return serveFile(res, path.join(db.OUT_DIR, ph[1]), 'image/jpeg');
+    const phUp = /^\/api\/clips\/(\d+)\/photo$/.exec(url.pathname);
+    if (phUp && req.method === 'PUT') return send(res, 200, await savePhoto(req, +phUp[1]));
+    const cv = /^\/cover\/(\d+)\.jpg$/.exec(url.pathname);
+    if (cv && req.method === 'GET') return serveFile(res, coverPath(+cv[1]), 'image/jpeg');
+    const cvUp = /^\/api\/clips\/(\d+)\/cover$/.exec(url.pathname);
+    if (cvUp && req.method === 'PUT') return send(res, 200, await saveCover(req, +cvUp[1]));
     const thUp = /^\/api\/clips\/(\d+)\/thumb$/.exec(url.pathname);
     if (thUp && req.method === 'PUT') return send(res, 200, await saveThumb(req, +thUp[1]));
+
+    const praw = /^\/product-raw\/(praw-\d+-\d+\.(mp4|webm))$/.exec(url.pathname);
+    if (praw && req.method === 'GET') return serveRange(req, res, path.join(PRAW_DIR, praw[1]), praw[2] === 'mp4' ? 'video/mp4' : 'video/webm');
+    const rawUp = /^\/api\/clips\/(\d+)\/raw$/.exec(url.pathname);
+    if (rawUp && req.method === 'PUT') return send(res, 200, await saveRawVideo(req, +rawUp[1]));
 
     const upload = /^\/api\/clips\/(\d+)\/video$/.exec(url.pathname);
     if (upload && req.method === 'PUT') return send(res, 200, await saveUpload(req, +upload[1]));

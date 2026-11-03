@@ -3,7 +3,7 @@
 (() => {
   const dlg = $('story');
   const KIND_TH = { character: '👤 ตัวละคร', location: '📍 สถานที่', prop: '🎒 ของประกอบ' };
-  const STATUS_SHOT = { draft: 'ร่าง', ready: 'พร้อมสร้าง', generated: 'สร้างแล้ว', approved: 'ใช้ได้', rejected: 'ไม่ผ่าน' };
+  const STATUS_SHOT = { draft: 'ร่าง', ready: 'รอไฟล์ใหม่', generated: 'มีไฟล์แล้ว', approved: 'ใช้ได้', rejected: 'ไม่ผ่าน' };
   let list = [];
   let cur = null; // { project, entities, shots, warnings, planned }
   let tab = 'story';
@@ -616,7 +616,7 @@
       genPicker(),
       p.media === 'image' ? sheetBox() : mergedBox(),
       stage,
-      h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · สร้างแล้ว ${done}/${cur.shots.length} — ${p.media === 'image' && p.per_image > 1 ? `คัดลอก prompt ตารางด้านบนไปวางใน ${genOf(p).short} แล้วแนบรูปตาราง → กด “✓ แนบ”` : `วาง prompt ทีละช็อตใน ${genOf(p).short} แล้วแนบ${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ได้เข้าช็อต`}` :'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
+      h('p', { class: 'hint', textContent: cur.shots.length ? `${cur.shots.length} ช็อต · รวม ${fmtSec(totalSec)} · มีไฟล์แล้ว ${done}/${cur.shots.length} — ${p.media === 'image' && p.per_image > 1 ? `คัดลอก prompt ตารางด้านบนไปวางใน ${genOf(p).short} แล้วแนบรูปตาราง → กด “✓ แนบ”` : `วาง prompt ทีละช็อตใน ${genOf(p).short} แล้วแนบ${p.media === 'image' ? 'รูป' : 'คลิป'}ที่ได้เข้าช็อต`}` :'ยังไม่มีช็อต — ตั้งคลังตัวละครให้เรียบร้อยก่อน แล้วกด “ให้ AI แบ่งช็อต”' }));
     wrap.append(assemblePanel());
     cur.shots.forEach((s, i) => wrap.append(shotCard(s, i)));
     return wrap;
@@ -635,6 +635,11 @@
     const [logo, logoL] = chk('ลายน้ำโลโก้', !!status.logo && status.brand?.logoOn !== false, !status.logo, status.logo ? '' : 'ยังไม่ได้ตั้งโลโก้ (ตั้งค่า → สไตล์ประจำเพจ)');
     const music = h('select', {}); fillMusic(music, 'none');
     const badge = h('input', { placeholder: 'ป้ายมุมคลิป เช่น ตอนที่ 20 (ไม่บังคับ)', maxLength: 40 });
+    // เทมเพลตตอนรวมคลิป (เก็บกับโปรเจกต์): ธรรมดา | B = สปอยล์ภาพนิ่ง (public/tplb.js) — เปลี่ยนแล้ววาดหน้าใหม่เพื่อโชว์/ซ่อนช่องของช็อต
+    const tplSel = h('select', {}, new Option('ธรรมดา (ซับไตเติลล่าง)', 'plain'), new Option('สปอยล์ภาพนิ่ง (เทมเพลต B — ป้ายตอน/มิเตอร์/การ์ดปก-จบ)', 'b'));
+    tplSel.value = p.template || 'plain';
+    tplSel.addEventListener('change', () => guard(tplSel, async () => { if (await save('PATCH', `/api/story/projects/${p.id}`, { template: tplSel.value })) render(); }, (e) => toast(e.message, true)));
+    const tplBox = p.template === 'b' ? tplForm(p, badge) : null;
     const go = h('button', { class: 'btn primary', type: 'button' });
     const why = h('p', { class: 'hint st-why' }); // บอกเหตุผลตอนกดไม่ได้ (ปุ่มจาง ๆ เฉย ๆ ผู้ใช้ไม่รู้ว่าต้องทำอะไร)
     const upd = () => {
@@ -651,16 +656,59 @@
       const missing = cur.shots.filter((s) => !s.video_file && s.status !== 'rejected').length;
       if (missing && !(await uiConfirm(`ยังมี ${missing} ช็อตที่ยังไม่มี${noun} — รวมเฉพาะช็อตที่มี${noun} (ข้ามช็อตที่เหลือ)?`, { title: 'รวมคลิป', ok: 'รวมเลย' }))) return;
       go.textContent = '⏳ กำลังรวมคลิป…';
-      await assemble(have, { voice: voice.checked, subs: subs.checked, keepAudio: keep.checked, music: music.value, logo: logo.checked && status.logo ? `/brand/logo.png?v=${status.logo.v}` : '', badge: badge.value.trim() });
+      const b = cur.project.template === 'b';
+      await assemble(have, { voice: voice.checked, subs: subs.checked, keepAudio: keep.checked, music: music.value, logo: !b && logo.checked && status.logo ? `/brand/logo.png?v=${status.logo.v}` : '', badge: b ? '' : badge.value.trim(), ...(b ? { template: 'b', tpl: tplMerged(cur.project, badge.value.trim()) } : {}) });
     }, (e) => { $('st-msg').textContent = e.message; toast(e.message, true); }).finally(upd));
     const panel = h('section', { class: 'st-asm' },
       h('h3', { textContent: '🎞 รวมเป็นคลิปเดียว' }),
       h('p', { class: 'hint', textContent: `ต่อ${noun}ของช็อตที่แนบแล้ว (ยกเว้นที่ติด ❌) ตามลำดับ${still ? ' แต่ละรูปซูม/แพนช้า ๆ ' : ' '}เป็นวิดีโอ ${p.aspect} คลิปเดียว บันทึกเข้าคลังคลิป — ใช้เวลาเท่าความยาวคลิป ต้องเปิดหน้านี้ค้างไว้ (กด ✕ หยุด ที่การ์ดความคืบหน้าได้)` }),
       h('div', { class: 'st-opts' }, voiceL, subsL, keepL, logoL),
-      h('div', { class: 'st-row' }, field('เพลงประกอบ', music), field('ป้ายบนคลิป', badge)),
+      field('เทมเพลต', tplSel),
+      ...(tplBox ? [tplBox] : []),
+      h('div', { class: 'st-row' }, field('เพลงประกอบ', music), ...(p.template === 'b' ? [] : [field('ป้ายบนคลิป', badge)])),
       h('div', { class: 'row' }, go), why);
     panel.updateCount = upd;
     return panel;
+  }
+
+  // ค่าเทมเพลต B ของโปรเจกต์ (project.tpl เป็น JSON) รวมกับค่าเริ่มต้น — ใช้ทั้งฟอร์มและตอนรวมคลิป
+  function tplMerged(p, epFallback = '') {
+    let t = {}; try { t = JSON.parse(p.tpl || '{}') || {}; } catch { t = {}; }
+    const pick = (v, d) => (typeof v === 'string' && v.trim() ? v : d);
+    const c = t.cover === false ? false : t.cover || {}, e = t.end === false ? false : t.end || {};
+    return {
+      epLabel: pick(t.epLabel, epFallback || p.title.slice(0, 40)), meterLabel: pick(t.meterLabel, 'ระดับสปอยล์'), meter: t.meter !== false,
+      cover: c === false ? false : { word: pick(c.word, 'สปอยล์'), title: pick(c.title, p.title.slice(0, 60)), ep: pick(c.ep, ''), sub: pick(c.sub, '') },
+      coverAfter: Number.isInteger(t.coverAfter) ? t.coverAfter : 1,
+      end: e === false ? false : { endTitle: pick(e.endTitle, 'ภาคต่อ'), line: pick(e.line, ''), credit: pick(e.credit, 'ภาพประกอบสร้างด้วย AI · เรียบเรียงเนื้อเรื่องด้วยถ้อยคำของเราเอง') },
+    };
+  }
+  function tplForm(p, badge) {
+    const t = tplMerged(p, badge.value.trim());
+    const inp = (v, ph, max) => h('input', { value: v || '', placeholder: ph, maxLength: max });
+    const ep = inp(t.epLabel, 'ป้ายตอนซ้ายบน เช่น EP.25 · ชื่อเรื่อง', 60), ml = inp(t.meterLabel, 'ชื่อมิเตอร์', 30);
+    const mOn = h('input', { type: 'checkbox', checked: t.meter });
+    const cOn = h('input', { type: 'checkbox', checked: t.cover !== false }), eOn = h('input', { type: 'checkbox', checked: t.end !== false });
+    const cw = inp(t.cover?.word, 'คำบนการ์ดปก เช่น สปอยล์', 20), ct = inp(t.cover?.title, 'ชื่อเรื่อง', 60), ce = inp(t.cover?.ep, 'ตอน เช่น EP.25', 20), cs = inp(t.cover?.sub, 'ข้อความป้ายล่าง เช่น ตอนจบซีซัน 1', 50);
+    const after = h('input', { type: 'number', min: 0, max: 20, step: 1, value: t.coverAfter });
+    const et = inp(t.end?.endTitle, 'หัวการ์ดจบ เช่น ภาคต่อ', 30), el = inp(t.end?.line, 'ข้อความการ์ดจบ', 120), ec = inp(t.end?.credit, 'เครดิต/หมายเหตุเล็ก ๆ ท้ายคลิป', 200);
+    const collect = () => ({
+      epLabel: ep.value, meterLabel: ml.value, meter: mOn.checked, coverAfter: Number(after.value) || 0,
+      cover: cOn.checked ? { word: cw.value, title: ct.value, ep: ce.value, sub: cs.value } : false,
+      end: eOn.checked ? { endTitle: et.value, line: el.value, credit: ec.value } : false,
+    });
+    const saveTpl = () => save('PATCH', `/api/story/projects/${p.id}`, { tpl: collect() });
+    [ep, ml, mOn, cOn, eOn, cw, ct, ce, cs, after, et, el, ec].forEach((x) => x.addEventListener('change', saveTpl));
+    const chkL = (i, label) => h('label', { class: 'st-opt' }, i, label);
+    return h('details', { class: 'st-tpl-form', open: true },
+      h('summary', { textContent: 'ตั้งค่าเทมเพลต B (ข้อความ ป้าย การ์ดปก/จบ)' }),
+      h('div', { class: 'st-row' }, field('ป้ายตอน', ep), field('ชื่อมิเตอร์', ml)),
+      h('div', { class: 'st-opts' }, chkL(mOn, 'แสดงมิเตอร์ระดับสปอยล์ (ช็อตที่ตั้ง “อัตโนมัติ” จะไล่ 1→5 ตามลำดับ)')),
+      h('div', { class: 'st-opts' }, chkL(cOn, 'การ์ดปก (3 วิ)'), h('label', { class: 'st-opt' }, 'แทรกหลังช็อตที่ ', after, ' (0 = ต้นคลิป)')),
+      h('div', { class: 'st-row' }, field('คำบนการ์ดปก', cw), field('ชื่อเรื่อง', ct), field('ตอน', ce), field('ป้ายล่าง', cs)),
+      h('div', { class: 'st-opts' }, chkL(eOn, 'การ์ดจบ (4 วิ)')),
+      h('div', { class: 'st-row' }, field('หัวการ์ดจบ', et), field('ข้อความ', el)),
+      field('เครดิตท้ายคลิป', ec));
   }
 
   async function assemble(shots, o) {
@@ -673,7 +721,15 @@
     let ok = false;
     try {
       const th = status.themes.find((t) => t.id === status.brand?.theme) || status.themes[0];
-      const r = await ReelRender.assemble(shots.map((s) => ({ url: `/story-media/${s.video_file}`, narration: s.narration, duration: s.duration })), {
+      let items = shots.map((s) => ({ url: `/story-media/${s.video_file}`, narration: s.narration, duration: s.duration }));
+      if (o.template === 'b') { // ข้อมูลต่อช็อต + การ์ดปก/จบที่สร้างตอนรวม (ไม่เก็บเป็นแถวช็อต)
+        const n = shots.length, lv = shots.map((s, k) => (s.meter > 0 ? s.meter : Math.max(1, Math.round((5 * (k + 1)) / n))));
+        items = items.map((it, k) => ({ ...it, caption: shots[k].caption, sfx: shots[k].sfx_text, layout: shots[k].layout, url2: shots[k].video_file2 ? `/story-media/${shots[k].video_file2}` : '', meter: lv[k], meterPrev: k ? lv[k - 1] : lv[k] }));
+        if (o.tpl.cover) items.splice(Math.min(o.tpl.coverAfter, items.length), 0, { card: 'cover', duration: 3 });
+        if (o.tpl.end) items.push({ card: 'end', duration: 4 });
+        o = { ...o, tpl: { epLabel: o.tpl.epLabel, meterLabel: o.tpl.meterLabel, meter: o.tpl.meter, card: { ...(o.tpl.cover || {}), ...(o.tpl.end || {}) } } };
+      }
+      const r = await ReelRender.assemble(items, {
         ...o, canvas, aspect: p.aspect, theme: th, signal: ctrl.signal, tone: p.narr_tone,
         onProgress: (x) => task.set(tid, 0.1 + x * 0.82, `กำลังรวมคลิป “${p.title}”`),
         onStatus: (t) => task.set(tid, /เสียง/.test(t) ? 0.06 : 0.04, t),
@@ -688,6 +744,8 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       ok = true;
+      // โปรเจกต์ผูกกับงานซีรีส์อยู่ → งานขึ้น ready (ไม่มีงานผูก/ผูกแล้วไม่อยู่ขั้นนี้ = ข้ามเงียบ ๆ ไม่กระทบการรวมคลิป)
+      fetch(`/api/story/projects/${p.id}/clip-done`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clip_id: clip.id }) }).catch(() => {});
       await withCaption(data); // แคปชัน/แฮชแท็กให้ทันที (พลาดก็ไม่ล้มงาน)
       await refresh();
       toast(`รวมคลิปเสร็จแล้ว ✓ — ดูในคลังคลิป (${Math.round(r.duration)} วิ)`);
@@ -766,6 +824,47 @@
       h('div', { class: 'st-prompt-head' }, h('span', { class: 'cap-label', textContent: still ? `Prompt สร้างรูป (แก้ได้) — วางใน ${genOf(cur.project).name}` : `Prompt วิดีโอ (แก้ได้) — วางใน ${genOf(cur.project).name}` }), copy),
       prompt,
       vbox);
+    if (cur.project.template === 'b') { // เทมเพลต B: ข้อความ/คำเสียง/มิเตอร์/เลย์เอาต์ของช็อตนี้ (วางไว้ใต้คำบรรยาย)
+      const cap = h('input', { value: s.caption || '', maxLength: 200, placeholder: 'กล่องข้อความล่าง — ครอบคำเน้นด้วย {{ }} เช่น ถูกพาไปให้{{ลูกสาว}}ตัดสินเอง' });
+      const sfx = h('input', { value: s.sfx_text || '', maxLength: 30, placeholder: 'คำเสียงตัวใหญ่ เช่น ตึง!! (ว่าง = ไม่มี)' });
+      const meter = h('select', {}, new Option('ระดับสปอยล์: อัตโนมัติ', '0'), ...[1, 2, 3, 4, 5].map((n) => new Option(`ระดับสปอยล์ ${n}`, String(n))));
+      meter.value = String(s.meter || 0);
+      const layout = h('select', {}, new Option('เลย์เอาต์: เต็มจอ', 'full'), new Option('เลย์เอาต์: แผ่นภาพ (ภาพในกรอบ)', 'plate'), new Option('เลย์เอาต์: แบ่งสองช่อง (2 รูป)', 'split'));
+      layout.value = s.layout || 'full';
+      cap.addEventListener('change', () => upd({ caption: cap.value }));
+      sfx.addEventListener('change', () => upd({ sfx_text: sfx.value }));
+      meter.addEventListener('change', () => upd({ meter: Number(meter.value) }));
+      layout.addEventListener('change', () => upd({ layout: layout.value }));
+      // รูปที่ 2 สำหรับเลย์เอาต์แบ่งสองช่อง (ช่องบน = รูปหลักของช็อต, ช่องล่าง = รูปนี้)
+      const pair = h('div', { class: 'st-row st-pair' });
+      const paintPair = () => {
+        pair.hidden = layout.value !== 'split';
+        const input = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp', hidden: true });
+        const pick = h('button', { class: 'btn sm', type: 'button', textContent: s.video_file2 ? '🔁 เปลี่ยนรูปที่ 2 (ช่องล่าง)' : '📎 แนบรูปที่ 2 (ช่องล่าง)' });
+        pick.addEventListener('click', () => input.click());
+        input.addEventListener('change', () => {
+          const f = input.files[0]; input.value = '';
+          if (!f) return;
+          guard(pick, async () => {
+            const r = await fetch(`/api/story/shots/${s.id}/video2`, { method: 'PUT', headers: { 'content-type': f.type || 'image/png' }, body: f });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || `อัปโหลดไม่สำเร็จ (${r.status})`);
+            cur = d; refreshCard(s.id); toast(`แนบรูปที่ 2 ช็อตที่ ${s.position} แล้ว ✓`);
+          }, (e) => toast(e.message, true));
+        });
+        const kids = [pick, input];
+        if (s.video_file2) {
+          const del = h('button', { class: 'btn sm danger', type: 'button', textContent: '🗑 เอารูปที่ 2 ออก' });
+          del.addEventListener('click', () => guard(del, async () => { cur = await api('DELETE', `/api/story/shots/${s.id}/video2`); refreshCard(s.id); }));
+          kids.unshift(h('img', { src: `/story-media/${s.video_file2}`, alt: 'รูปที่ 2', class: 'st-still', style: 'max-height:72px' }));
+          kids.push(del);
+        }
+        pair.replaceChildren(...kids);
+      };
+      layout.addEventListener('change', paintPair);
+      paintPair();
+      narr.after(h('div', { class: 'st-tpl' }, cap, h('div', { class: 'st-row' }, sfx, meter, layout), pair));
+    }
     card.dataset.i = String(i);
     card._refs = { prompt, warn, before, stat };
     paintWarn(card, s.id);
@@ -861,6 +960,9 @@
   window.openStory = () => open().catch((err) => toast(err.message, true));
   // เปิดหน้าโปรเจกต์เรื่องที่โปรเจกต์หนึ่งโดยตรง (ใช้โดยปุ่ม "ขยายเป็นเรื่อง" ในคลังคลิป)
   window.openStoryProject = async (id) => { await loadList(id); tab = 'story'; render(); $('st-msg').textContent = ''; if (!dlg.open) dlg.showModal(); };
+  // ลิงก์ตรงจากหน้าซีรีส์: /?story=<id> เปิดโปรเจกต์นั้นเลย
+  const deep = new URLSearchParams(location.search).get('story');
+  if (/^\d+$/.test(deep || '')) window.addEventListener('load', () => window.openStoryProject(Number(deep)).catch((err) => toast(err.message, true)));
   $('st-x').addEventListener('click', () => dlg.close());
   $('st-close').addEventListener('click', () => dlg.close());
   $('st-sel').addEventListener('change', () => guard($('st-sel'), async () => { await loadList(Number($('st-sel').value)); render(); }));

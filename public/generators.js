@@ -9,6 +9,8 @@ window.ARN_GEN = {
       : `ใน Flow: เลือกโมเดล Nano Banana 2.1 และสัดส่วน ${a} ที่มุมขวาล่างของช่องพิมพ์ ตั้งจำนวนเป็น x1 ถ้าอยากได้รูปเดียวต่อ prompt แล้ววาง prompt`) },
   chatgpt: { name: 'ChatGPT', short: 'ChatGPT', url: 'https://chatgpt.com', media: ['image'],
     tip: (a) => `ใน ChatGPT: วาง prompt แล้วระบุสัดส่วน ${a} ในข้อความถ้ารูปออกมาผิดสัดส่วน` },
+  gemini: { name: 'Gemini', short: 'Gemini', url: 'https://gemini.google.com/app', media: ['image'],
+    tip: (a) => `ใน Gemini: เปิดแชตใหม่ทุกช็อต วาง prompt พร้อมระบุสัดส่วน ${a} และใส่คำอธิบายตัวละครเต็มทุกครั้ง (แชตเดิมค้างสถานะสร้างรูป ส่งต่อไม่ได้) รูปที่ได้อาจเล็กกว่าคลิป — ตรวจเวลาในฉาก (กลางวัน/กลางคืน) ในพรอมต์ด้วย` },
   meta: { name: 'Meta AI', short: 'Meta AI', url: 'https://meta.ai', media: ['image', 'video'],
     tip: (a, m) => (m === 'video' ? 'ใน Meta AI: เลือกโหมดสร้างวิดีโอก่อนวาง prompt (ได้คลิปราว 5–10 วินาที)' : 'ใน Meta AI: เลือกโหมดสร้างรูปภาพก่อนวาง prompt') },
   seedance: { name: 'Seedance', short: 'Seedance', url: '', media: ['video'],

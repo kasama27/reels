@@ -238,6 +238,7 @@ window.ReelRender = (() => {
 
   // ---------- เสียง ----------
   const hz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+  const MAKEUP_B = 1.55; // เกนชดเชยหลังคอมเพรสเซอร์ของเทมเพลต B (ปรับตามผลวัดคลิปจริง)
   const VOICE_LEAD = 0.35, VOICE_TAIL = 0.7; // เว้นหัว/ท้ายฉากรอบเสียงพากย์ (วินาที)
 
   // เพลงพื้นหลังสร้างสดด้วย WebAudio (original ทั้งหมด ไม่มีปัญหาลิขสิทธิ์) — ตั้งเวลาโน้ตทั้งเพลงล่วงหน้า
@@ -310,6 +311,14 @@ window.ReelRender = (() => {
       bp.frequency.setValueAtTime(350, at); bp.frequency.exponentialRampToValueAtTime(5000, at + 0.5);
       g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.9 * vol, at + 0.3); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.58);
       src.connect(bp).connect(g); src.start(at); src.stop(at + 0.6);
+    } else if (kind === 'hit') { // กระแทก: ซับเบสตกความถี่ + ลมหายใจสั้น ๆ (ตอนคำเสียงตัวใหญ่เด้ง)
+      const o = ac.createOscillator(), len = Math.floor(ac.sampleRate * 0.12), buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+      for (let k = 0; k < len; k++) d[k] = (Math.random() * 2 - 1) * (1 - k / len);
+      o.type = 'sine'; o.frequency.setValueAtTime(150, at); o.frequency.exponentialRampToValueAtTime(42, at + 0.28);
+      g.gain.setValueAtTime(0.55 * vol, at); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.38);
+      const n = ac.createBufferSource(), ng = ac.createGain();
+      n.buffer = buf; ng.gain.value = 0.35 * vol; n.connect(ng).connect(g);
+      o.connect(g); o.start(at); o.stop(at + 0.4); n.start(at); n.stop(at + 0.15);
     } else if (kind === 'pop') {
       const o = ac.createOscillator();
       o.type = 'sine'; o.frequency.setValueAtTime(380, at); o.frequency.exponentialRampToValueAtTime(1400, at + 0.14);
@@ -413,6 +422,38 @@ window.ReelRender = (() => {
   }
 
   // ลายน้ำโลโก้เล็ก ๆ มุมซ้ายบน โปร่งแสง ทุกฉาก (ไม่เด่นกว่าเนื้อหา)
+  // ข้อความแนะนำสินค้า (คลิปสินค้า Meta AI): ชิดซ้ายช่วงบน ตัวหนานุ่ม ขาว + ชมพูพาสเทล เงาบาง ๆ ไม่มีขอบหนา ค่อย ๆ ขึ้นทีละบรรทัด
+  // ใช้ฟอนต์ LINE Seed Sans TH ถ้าติดตั้งในเครื่อง (ตามสเปก) ไม่มีก็ใช้ฟอนต์ไทยของ Windows
+  const INTRO_FONT = `"LINE Seed Sans TH", "LINESeedSansTH", ${FONT}`;
+  function drawIntro(ctx, intro, t, CW) {
+    const x = Math.round(CW * 0.067), maxW = CW - x * 2;
+    let y = Math.round(CW * 0.2);
+    const rows = [
+      { text: intro.kicker || 'Introducing ♡', size: Math.round(CW * 0.06), color: intro.accent || '#F3B6D5', weight: 800 },
+      { text: intro.lead || 'ขอแนะนำ', size: Math.round(CW * 0.085), color: '#FFFFFF', weight: 900 },
+      { text: intro.name || '', size: Math.round(CW * 0.095), color: '#FFFFFF', weight: 900 },
+    ];
+    ctx.save();
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    rows.forEach((r, k) => {
+      if (!r.text) return;
+      const a = Math.max(0, Math.min(1, (t - (intro.start ?? 0.4) - k * 0.35) / 0.5)); // fade-in ทีละบรรทัด
+      ctx.font = `${r.weight} ${r.size}px ${INTRO_FONT}`;
+      const lines = k === 2 ? wrap(ctx, r.text, maxW).slice(0, 3) : [r.text];
+      for (const l of lines) {
+        if (a > 0) {
+          ctx.globalAlpha = a;
+          ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = r.size * 0.25; ctx.shadowOffsetY = r.size * 0.06;
+          ctx.fillStyle = r.color;
+          ctx.fillText(l, x, y + (1 - a) * r.size * 0.25); // ลอยขึ้นนิด ๆ ตอนปรากฏ
+        }
+        y += r.size * 1.22;
+      }
+      y += r.size * 0.12;
+    });
+    ctx.restore();
+  }
+
   function drawLogo(ctx, logo, t) {
     if (!logo) return;
     const lw = 130, lh = lw * logo.height / logo.width;
@@ -491,7 +532,7 @@ window.ReelRender = (() => {
     // เสียงพากย์: ขอ WAV ต่อฉากจากเซิร์ฟเวอร์ แล้วขยายความยาวฉากให้พอดีกับเสียง
     let voices = [];
     if (opts.voice) {
-      try { voices = await ttsBuffers(ac, scenes.map((s) => s.say), opts.onStatus, 'กำลังสร้างเสียงพากย์…', opts.signal); } catch (e) { closeAc(ac); throw e; }
+      try { voices = await ttsBuffers(ac, scenes.map((s) => s.say), opts.onStatus, 'กำลังสร้างเสียงพากย์…', opts.signal, opts.tone || ''); } catch (e) { closeAc(ac); throw e; }
       voices.forEach((v, i) => { if (v) scenes[i].dur = Math.max(scenes[i].dur, v.duration + VOICE_LEAD + VOICE_TAIL); });
     }
     // ความยาวเป้าหมาย: ยืด/หดเวลาต่อฉากให้ใกล้เป้า (ฉากที่มีเสียงพากย์หดต่ำกว่าความยาวเสียงไม่ได้)
@@ -564,6 +605,10 @@ window.ReelRender = (() => {
     const mime = pickMime();
     if (!mime) throw new Error('เบราว์เซอร์นี้อัดวิดีโอไม่ได้ — ใช้ Chrome หรือ Edge');
     if (!shots.length) throw new Error('ยังไม่มีคลิปให้รวม');
+    // เทมเพลต B (public/tplb.js): วางชั้นข้อความทับช็อตตามตำแหน่งตายตัวของ 9:16 + การ์ดปก/จบ (shots[i].card = 'cover' | 'end', ไม่มี url)
+    const tb = opts.template === 'b' ? window.ReelTplB : null;
+    if (opts.template === 'b' && !tb) throw new Error('โหลดเทมเพลต B ไม่สำเร็จ (tplb.js)');
+    if (tb && (opts.aspect || '9:16') !== '9:16') throw new Error('เทมเพลต B ใช้ได้กับสัดส่วน 9:16 เท่านั้น');
     const [CW, CH] = SIZES[opts.aspect] || SIZES['9:16'];
     const theme = opts.theme || { colors: ['#0b1020', '#1b2550'], accent: '#ffd36b', id: 'dark' };
 
@@ -571,6 +616,10 @@ window.ReelRender = (() => {
     const isStill = shots.map((s) => /\.(png|jpe?g|webp)(\?|$)/i.test(s.url));
     const STILL_SEC = 6; // ภาพนิ่งที่ไม่มีเสียงบรรยาย: ค้างไว้ช็อตละกี่วินาที
     const vids = await Promise.all(shots.map((s, i) => new Promise((resolve, reject) => {
+      if (s.card) { // การ์ดปก/จบ: ไม่มีไฟล์ — ตัวแทนให้โค้ดส่วนที่เหลือใช้ร่วม (วาดด้วย ReelTplB.drawCard)
+        resolve({ still: true, card: s.card, videoWidth: 1, videoHeight: 1, duration: s.duration, readyState: 4, pause() {}, play() { return Promise.resolve(); } });
+        return;
+      }
       if (isStill[i]) { // ภาพนิ่ง: ทำตัวให้เหมือน video (videoWidth/duration) เพื่อใช้โค้ดส่วนที่เหลือร่วมกัน
         const im = new Image();
         im.onload = () => resolve({ still: true, im, videoWidth: im.naturalWidth, videoHeight: im.naturalHeight, duration: Math.max(2, s.duration || STILL_SEC), readyState: 4, pause() {}, play() { return Promise.resolve(); } });
@@ -584,12 +633,28 @@ window.ReelRender = (() => {
       v.onerror = () => reject(new Error(`เปิดคลิปของช็อตที่ ${i + 1} ไม่ได้`));
       v.src = s.url;
     })));
+    // เลย์เอาต์ "แบ่งสองช่อง" (เทมเพลต B): รูปที่ 2 ของช็อต (s.url2) — โหลดไม่ได้ให้ล้มพร้อมบอกช็อต ไม่วาดครึ่งเดียวเงียบ ๆ
+    if (tb) await Promise.all(shots.map(async (s, i) => { if (s.layout === 'split') { const im = await loadImage(s.url2); if (!im) throw new Error(`ช็อตที่ ${i + 1} ตั้งเป็นแบ่งสองช่อง แต่ไม่มีรูปที่ 2`); vids[i].pair = { still: true, im, videoWidth: im.naturalWidth, videoHeight: im.naturalHeight }; } }));
     for (const [i, v] of vids.entries()) if (!(v.duration > 0.2 && Number.isFinite(v.duration))) throw new Error(`คลิปของช็อตที่ ${i + 1} ไม่มีความยาว (ไฟล์เสีย?)`);
     checkStop(opts.signal); // โหลดหลายคลิปใช้เวลา — กดหยุดระหว่างนี้ไม่ต้องไปต่อ
 
     const ac = new AudioContext({ sampleRate: 48000 });
     await ac.resume();
     const dest = ac.createMediaStreamDestination();
+    // เทมเพลต B: มิกซ์ปลายสาย คอมเพรสเซอร์ → เกนชดเชย → ลิมิตเตอร์ ให้เสียงแน่นสม่ำเสมอ ไม่มีช่วงเบาหวิว (เป้า ≈ −17 dBFS เฉลี่ย พีค ≤ −1.5 — วัดจากคลิปตัวอย่าง)
+    let bus = dest;
+    if (tb) {
+      const comp = ac.createDynamicsCompressor(), mk = ac.createGain(), lim = ac.createDynamicsCompressor();
+      comp.threshold.value = -32; comp.knee.value = 18; comp.ratio.value = 6; comp.attack.value = 0.005; comp.release.value = 0.2;
+      mk.gain.value = MAKEUP_B;
+      lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.08;
+      // กันพีคเกินเต็มสเกลด้วยซอฟต์คลิป tanh (คอมเพรสเซอร์ของเบราว์เซอร์ไม่ใช่ลิมิตเตอร์เด็ดขาด — ทดสอบแล้วพีคเกิน 0 dBFS)
+      const clip = ac.createWaveShaper(), curve = new Float32Array(4097);
+      for (let k = 0; k < curve.length; k++) curve[k] = Math.tanh((k / 2048 - 1) * 1.0);
+      clip.curve = curve;
+      comp.connect(mk).connect(lim).connect(clip).connect(dest);
+      bus = comp;
+    }
 
     // เสียงบรรยาย: ขอ WAV ต่อช็อตที่มีข้อความ แล้วยืดช่วงของช็อตให้พอดีกับเสียง (ไม่ตัดเสียง)
     let voices = shots.map(() => null);
@@ -614,19 +679,57 @@ window.ReelRender = (() => {
 
     const ta = ac.currentTime + 0.3;
     const voiced = voices.some(Boolean);
-    scheduleMusic(ac, dest, { music: opts.music, buf: musicBuf, total, ta, level: (voiced ? 0.4 : 0.9) * 0.6 * (musicBuf ? 0.39 : 1) });
-    scheduleVoices(ac, dest, voices, segs.map((g) => g.start), ta);
+    scheduleMusic(ac, bus, { music: opts.music, buf: musicBuf, total, ta, level: (voiced ? 0.4 : 0.9) * 0.6 * (musicBuf ? 0.39 : 1) });
+    scheduleVoices(ac, bus, voices, segs.map((g) => g.start), ta);
     if (opts.keepAudio) {
-      vids.forEach((v) => { if (v.still) return; v.muted = false; ac.createMediaElementSource(v).connect(dest); });
+      vids.forEach((v) => { if (v.still) return; v.muted = false; ac.createMediaElementSource(v).connect(bus); });
+    }
+    if (tb) { // เสียงเอฟเฟกต์ของเทมเพลต: กระแทกตอนคำเสียงเด้ง, ปกเข้า/จบมีเสียงเบา ๆ
+      segs.forEach((g, i) => {
+        if (shots[i].sfx) sfx(ac, bus, 'hit', ta + g.start + 0.12);
+        if (shots[i].card === 'cover') sfx(ac, bus, 'whoosh', ta + g.start + 0.02, 0.7);
+        if (shots[i].card === 'end') sfx(ac, bus, 'ding', ta + g.start + 0.25, 0.6);
+      });
     }
 
-    const cover = (v, p = 0, idx = 0) => {
-      const k = Math.max(CW / v.videoWidth, CH / v.videoHeight), w = v.videoWidth * k, h = v.videoHeight * k;
-      if (!v.still) return ctx.drawImage(v, (CW - w) / 2, (CH - h) / 2, w, h);
+    // r = กรอบที่จะวาดลงไป (ค่าเริ่มต้น = เต็มจอ; เลย์เอาต์ "แผ่นภาพ" ของเทมเพลต B ใช้กรอบเล็ก)
+    const FULL = { x: 0, y: 0, w: CW, h: CH };
+    const cover = (v, p = 0, idx = 0, r = FULL) => {
+      const k = Math.max(r.w / v.videoWidth, r.h / v.videoHeight), w = v.videoWidth * k, h = v.videoHeight * k;
+      if (!v.still) return ctx.drawImage(v, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
       // ภาพนิ่ง: ซูมช้าๆ (เข้า/ออกสลับช็อต) + แพนเล็กน้อยไปมุมต่างกัน ให้ภาพมีชีวิต
       const zoom = idx % 2 === 0 ? 1 + 0.12 * p : 1.12 - 0.12 * p;
-      const dx = [-1, 1, 0, 0][idx % 4] * 0.03 * CW * (p - 0.5), dy = [0, 0, -1, 1][idx % 4] * 0.03 * CH * (p - 0.5);
-      ctx.drawImage(v.im, (CW - w * zoom) / 2 + dx, (CH - h * zoom) / 2 + dy, w * zoom, h * zoom);
+      const dx = [-1, 1, 0, 0][idx % 4] * 0.03 * r.w * (p - 0.5), dy = [0, 0, -1, 1][idx % 4] * 0.03 * r.h * (p - 0.5);
+      ctx.drawImage(v.im, r.x + (r.w - w * zoom) / 2 + dx, r.y + (r.h - h * zoom) / 2 + dy, w * zoom, h * zoom);
+    };
+    const tplOpts = tb && { ...(opts.tpl || {}), theme };
+    // เทมเพลต B: ภาพช็อต (เต็มจอ หรือในกรอบ "แผ่นภาพ") + ชั้นข้อความ/มิเตอร์ของ ReelTplB; การ์ดปก/จบวาดล้วน
+    const drawTpl = (i, lt) => {
+      const sh = shots[i], dur = segs[i].dur, p = Math.min(1, lt / dur);
+      if (sh.card) return tb.drawCard(ctx, sh.card, lt, dur, tplOpts);
+      if (sh.layout === 'split' && vids[i].pair) {
+        const pal = tb.palette(theme), a = tb.plateRect(CW, CH), gap = 28, ph = Math.floor((a.h - gap) / 2);
+        const rs = [{ x: a.x, y: a.y, w: a.w, h: ph }, { x: a.x, y: a.y + ph + gap, w: a.w, h: ph }];
+        tb.drawPlateBackdrop(ctx, pal);
+        rs.forEach((r, k) => {
+          tb.plateShadow(ctx, r, pal);
+          ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+          ctx.fillStyle = '#000'; ctx.fillRect(r.x, r.y, r.w, r.h);
+          if (k === 0) { if (vids[i].readyState >= 2) cover(vids[i], p, i, r); } else cover(vids[i].pair, p, i + 1, r);
+          ctx.restore(); tb.drawPlateFrame(ctx, r, pal);
+        });
+      } else if (sh.layout === 'plate') {
+        const pal = tb.palette(theme), r = tb.plateRect(CW, CH);
+        tb.drawPlateBackdrop(ctx, pal); tb.plateShadow(ctx, r, pal);
+        ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+        ctx.fillStyle = '#000'; ctx.fillRect(r.x, r.y, r.w, r.h);
+        if (vids[i].readyState >= 2) cover(vids[i], p, i, r);
+        ctx.restore(); tb.drawPlateFrame(ctx, r, pal);
+      } else {
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH);
+        if (vids[i].readyState >= 2) cover(vids[i], p, i);
+      }
+      tb.drawShotOverlay(ctx, { narration: opts.subs ? sh.narration : '', caption: sh.caption, sfx: sh.sfx, meter: sh.meter, meterPrev: sh.meterPrev, index: i }, lt, dur, tplOpts);
     };
     let cur = -1;
     const draw = (t) => {
@@ -639,6 +742,7 @@ window.ReelRender = (() => {
         vids[i].play().catch(() => {});
       }
       const lt = t - segs[i].start;
+      if (tb) return drawTpl(i, lt); // เทมเพลต B วาดทั้งภาพ/ข้อความ/ป้ายเอง (ไม่ใช้ซับไตเติล ป้ายมุม และโลโก้แบบเดิม)
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH);
       if (vids[i].readyState >= 2) cover(vids[i], Math.min(1, lt / segs[i].dur), i);
       // ซับไตเติล: ข้อความบรรยายของช็อต ขึ้นตลอดช่วงเสียง (ไม่มีเสียงก็ขึ้นตลอดช็อต) อยู่ช่วงล่างค่อนบน เลี่ยงแถบ/ปุ่มของ Facebook
@@ -656,6 +760,7 @@ window.ReelRender = (() => {
           ctx.restore();
         }
       }
+      if (opts.intro) drawIntro(ctx, opts.intro, t, CW);
       if (opts.badge) drawBadge(ctx, theme, opts.badge, t);
       drawLogo(ctx, logoImg, t);
     };
@@ -671,9 +776,22 @@ window.ReelRender = (() => {
       vids[0].muted = true;
       await new Promise((resolve) => { vids[0].onseeked = resolve; vids[0].currentTime = Math.min(0.5, vids[0].duration / 2); setTimeout(resolve, 1500); });
     }
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH); cover(vids[0]);
+    if (tb) { // หน้าปก: ช็อตแรกที่ไม่ใช่การ์ด ณ วินาทีที่ข้อความขึ้นครบแล้ว
+      const k = Math.max(0, shots.findIndex((s) => !s.card));
+      drawTpl(k, Math.min(1.2, segs[k].dur - 0.05));
+    } else {
+      // คลิปสินค้า: หน้าปก = เฟรมที่วินาที coverAt ของวิดีโอ (ตั้งได้ ค่าเริ่มต้น 0.4) + ข้อความแนะนำเต็ม (ถ้า coverText ไม่ปิด)
+      if (opts.coverAt != null && !vids[0].still) {
+        const at = Math.max(0, Math.min(Number(opts.coverAt) || 0, (vids[0].duration || 1) - 0.05));
+        await new Promise((resolve) => { vids[0].onseeked = resolve; vids[0].currentTime = at; setTimeout(resolve, 2000); });
+      }
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH); cover(vids[0]);
+      if (opts.intro && opts.coverText !== false) drawIntro(ctx, opts.intro, 9, CW);
+    }
     const thumb = await thumbOf(canvas);
-    return { ...out, duration: total, thumb };
+    // หน้าปกเต็มขนาด (ไว้อัปโหลดเป็นภาพขนาดย่อของ Reels) — เฉพาะเมื่อขอ
+    const coverJpg = opts.coverAt != null ? await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9)) : null;
+    return { ...out, duration: total, thumb, cover: coverJpg };
   }
 
   return { render, pickMime, assemble };

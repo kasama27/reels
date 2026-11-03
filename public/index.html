@@ -12,20 +12,249 @@
     <span class="logo" aria-hidden="true">🎬</span>
     <div><b>Arn Reels</b><small>สร้างคลิป · เขียนแคปชัน · เก็บรอโพสต์</small></div>
   </div>
+  <nav class="tabs" id="tabs" aria-label="เมนูหลัก">
+    <a href="#today" data-view="today">วันนี้</a>
+    <a href="#products" data-view="products" id="b-products">สินค้า</a>
+    <a href="#create" data-view="create">สร้างคลิป</a>
+    <a href="#library" data-view="library">คลัง <span id="tab-count" class="tab-n"></span></a>
+    <a href="#schedule" data-view="schedule">ตารางโพสต์ <span id="tab-due" class="tab-due" hidden>●</span></a>
+    <a href="#series" data-view="series">ซีรีส์</a>
+  </nav>
   <div class="topbar-right">
     <div id="chips" class="chips" aria-label="สถานะระบบ"></div>
-    <button id="b-settings" class="btn ghost" type="button">⚙ ตั้งค่า</button>
+    <button id="b-settings" class="btn ghost icon" type="button" aria-label="ตั้งค่า" title="ตั้งค่า">⚙</button>
   </div>
 </header>
 
 <main class="layout">
+  <!-- หน้าสินค้า (แท็บ "สินค้า"): ① หาสินค้า ② เลือก ③ ทำคลิป -->
+  <section id="products" class="pview" aria-labelledby="pd-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="pd-h">🛍 คลิปแนะนำสินค้า Shopee</h2><div class="hint">หาสินค้า → เลือก → ทำคลิปบน Meta AI → โพสต์เพจ Facebook</div></div>
+      <button type="button" class="btn ghost icon" id="pd-x" aria-label="ปิด" hidden>✕</button>
+    </div>
+    <div class="pr-body">
+      <!-- 3 ขั้น: ① หาสินค้า (คีย์เวิร์ด → เว็บ Shopee Affiliate) ② เลือกสินค้าในคลัง ③ ทำคลิป -->
+      <nav class="pf-steps" role="tablist" aria-label="ขั้นตอน">
+        <button type="button" class="pf-step" role="tab" data-step="1"><b>1</b><span>หาสินค้า</span></button>
+        <button type="button" class="pf-step" role="tab" data-step="2"><b>2</b><span>เลือกสินค้า <small id="pf-sel-badge"></small></span></button>
+        <button type="button" class="pf-step" role="tab" data-step="3"><b>3</b><span>ทำคลิป <small id="pc-queue"></small></span></button>
+      </nav>
+
+      <!-- ① หาสินค้า -->
+      <section class="pf-pane" data-pane="1">
+        <div class="pf-card">
+          <div class="pf-by" role="group" aria-label="ค้นด้วย">
+            <button type="button" data-by="kw" aria-pressed="true">🔎 คีย์เวิร์ดสินค้า</button>
+            <button type="button" data-by="shop" aria-pressed="false">🏪 ชื่อร้านค้า</button>
+          </div>
+          <label class="pf-label" for="pf-kw" id="pf-kw-l">พิมพ์คีย์เวิร์ดที่จะให้หาใน Shopee</label>
+          <div class="pf-search">
+            <input id="pf-kw" type="search" maxlength="80" placeholder="เช่น ของใช้ในบ้าน, ครีมกันแดด, กระเป๋า" autocomplete="off">
+            <select id="pf-n" aria-label="จำนวนสินค้า"><option value="5">5 ชิ้น</option><option value="10">10 ชิ้น</option><option value="20" selected>20 ชิ้น</option><option value="30">30 ชิ้น</option><option value="50">50 ชิ้น</option></select>
+            <button type="button" class="btn primary" id="pf-go">🔎 หาใน Shopee</button>
+          </div>
+          <div class="pf-chips" id="pf-recent" aria-label="คีย์เวิร์ดล่าสุด"></div>
+          <p class="hint" id="pf-shop-note" hidden>เปิดหน้า <b>ข้อเสนอร้านค้า</b> ของ Shopee Affiliate แล้วแผง Arn Reels (โหมด 🏪 ค้นร้านค้า) หาร้านและดึงสินค้าของร้านให้ (เรียงขายดี) — ไม่ต้องเรียนรู้วิธีค้นก่อน</p>
+        </div>
+        <ol class="pf-how">
+          <li><b>กด “หาใน Shopee”</b> — เปิดเว็บ Shopee Affiliate แท็บใหม่ (ต้องล็อกอินไว้ใน Chrome) แผง <b>🛍 Arn Reels · หาสินค้า</b> มุมขวาล่างจะใส่คีย์เวิร์ดและค้นให้</li>
+          <li><b>ติ๊กสินค้าในแผงนั้น</b> แล้วกด <b>“➕ เพิ่มเข้า Arn Reels”</b> — ได้ลิงก์แอฟฟิลิเอต + รูปสินค้ามาเอง</li>
+          <li><b>กลับมาหน้านี้</b> แล้วไปขั้น <b>2 เลือกสินค้า</b> (กด ↻ ถ้ายังไม่เห็น)</li>
+        </ol>
+        <p class="pf-note">ครั้งแรกเท่านั้น: ถ้าแผงบอกว่า “ยังไม่ได้เรียนรู้วิธีค้น” ให้พิมพ์คำอะไรก็ได้ใน<b>ช่องค้นหาของเว็บ Shopee</b> 1 ครั้ง (เรียง “ขายดี” ไว้ถ้าต้องการ) แล้วกดหาในแผงอีกที · ยังไม่เห็นแผง = ยังไม่ได้ติดตั้ง/รีโหลดส่วนเสริม Arn Reels Companion</p>
+        <details class="pd-import">
+          <summary>มีลิงก์อยู่แล้ว? เพิ่มสินค้าเอง / วางหลายรายการ / ดึงจากมือถือ</summary>
+          <form id="pd-form" class="pd-form">
+            <input id="pd-name" maxlength="150" placeholder="ชื่อสินค้า" autocomplete="off" required>
+            <input id="pd-url" type="url" maxlength="500" placeholder="ลิงก์แอฟฟิลิเอต (https://s.shopee.co.th/…)" autocomplete="off" required>
+            <input id="pd-tags" maxlength="200" placeholder="แท็ก/หมวด (ไม่บังคับ)" autocomplete="off">
+            <input id="pd-note" maxlength="300" placeholder="โน้ต จุดเด่น/ขนาด (ไม่บังคับ)" autocomplete="off">
+            <input id="pd-sales" type="number" min="0" step="1" inputmode="numeric" placeholder="ยอดขาย (ไม่บังคับ)" title="ไว้จัดอันดับ “ขายดี”">
+            <button type="submit" class="btn" id="pd-add">＋ เพิ่มสินค้านี้</button>
+          </form>
+          <details class="pd-import">
+            <summary>วางหลายรายการพร้อมกัน</summary>
+            <p class="hint">1 บรรทัด = 1 สินค้า รูปแบบ <code>ชื่อ | ลิงก์ | แท็ก | โน้ต | ยอดขาย</code> (แท็ก โน้ต ยอดขาย ไม่ต้องใส่ก็ได้ ลิงก์ซ้ำจะข้ามให้)</p>
+            <textarea id="pd-bulk" rows="5" placeholder="ครีมกันแดดสูตรเย็น | https://s.shopee.co.th/xxxx | ความงาม | SPF50 | 1250&#10;หม้อทอดไร้น้ำมัน | https://s.shopee.co.th/yyyy | ครัว | | 830"></textarea>
+            <button type="button" class="btn" id="pd-bulk-go">นำเข้า</button>
+          </details>
+          <!-- สินค้าที่เคยลงคลิปแล้วในแอป Pondy บนมือถือ (อ่านผ่าน adb ไม่แก้ไขอะไรบนมือถือ) -->
+          <details class="pd-import" id="pd-pondy">
+            <summary>📱 ดึงจากแอป Pondy บนมือถือ (สินค้าที่ลงคลิปแล้ว)</summary>
+            <p class="hint">ต่อมือถือเข้าคอม (เปิด USB debugging) แล้วกด “ตรวจมือถือ” — ส่วนใหญ่เป็นลิงก์สินค้า Shopee ธรรมดา ไม่ใช่ลิงก์แอฟฟิลิเอต · ไม่แก้ไขข้อมูลบนมือถือ</p>
+            <div class="row"><button type="button" class="btn sm" id="pp-scan">🔌 ตรวจมือถือ</button></div>
+            <div id="pp-devs" class="pp-devs"></div>
+            <div id="pp-opts" class="pp-opts" hidden>
+              <label>ค้นชื่อ/คีย์เวิร์ด <input id="pp-q" placeholder="เว้นว่าง = ทั้งหมด" autocomplete="off"></label>
+              <label>โพสต์ภายใน
+                <select id="pp-days">
+                  <option value="0.0417">1 ชั่วโมงล่าสุด</option>
+                  <option value="0.25">6 ชั่วโมงล่าสุด</option>
+                  <option value="1">1 วันล่าสุด</option>
+                  <option value="7">7 วันล่าสุด</option>
+                  <option value="30" selected>30 วันล่าสุด</option>
+                  <option value="0">ทั้งหมด</option>
+                </select>
+              </label>
+              <label>แสดงให้เลือกทีละ (รายการ) <input id="pp-limit" type="number" min="1" max="200" step="1" value="10" inputmode="numeric"></label>
+              <div class="row"><button type="button" class="btn sm primary" id="pp-preview">ดูรายการให้เลือก</button><button type="button" class="btn sm danger" id="pp-clear" title="ลบสินค้าที่นำเข้าจากมือถือทั้งหมด (สินค้าที่เพิ่มเองไม่ถูกลบ)">🗑 ล้างที่นำเข้า</button></div>
+              <p id="pp-info" class="hint"></p>
+              <div id="pp-pick" class="pp-pick" hidden>
+                <div class="row"><button type="button" class="btn sm ghost" id="pp-all">เลือกทั้งหมด</button><button type="button" class="btn sm ghost" id="pp-none">ไม่เลือก</button><span id="pp-sel" class="hint"></span></div>
+                <ul id="pp-list" class="pp-list"></ul>
+                <div class="row"><button type="button" class="btn" id="pp-more">＋ แสดงเพิ่มอีก 10</button><button type="button" class="btn primary" id="pp-import">นำเข้าที่เลือก</button></div>
+              </div>
+            </div>
+          </details>
+        </details>
+      </section>
+
+      <!-- ② เลือกสินค้าในคลัง -->
+      <section class="pf-pane" data-pane="2" hidden>
+        <p class="pf-lead">ติ๊ก ☐ สินค้าที่จะทำคลิป · กดกรอบรูปเพื่อใส่/เปลี่ยน <b>📷 รูปสินค้าจริง</b> (ใช้แนบให้ Meta AI) · ตั้ง “ชื่อในคลิป” สั้น ๆ ได้ที่ ✎ แก้ไข</p>
+        <div class="lib-tools">
+          <input id="pd-q" type="search" placeholder="🔍 กรองในคลัง (ชื่อ/แท็ก/โน้ต)" aria-label="กรองสินค้าในคลัง">
+          <select id="pd-shop" aria-label="เลือกร้านค้า"><option value="">🏪 ทุกร้าน</option></select>
+          <select id="pd-sort" aria-label="เรียงสินค้า"><option value="new">เพิ่มล่าสุดก่อน</option><option value="posted">โพสต์ล่าสุดก่อน</option><option value="sales">ขายดีก่อน</option></select>
+          <button type="button" class="btn sm ghost" id="pd-reload" title="โหลดคลังใหม่ (หลังเพิ่มสินค้าจากเว็บ Shopee)">↻</button>
+        </div>
+        <div class="row pf-selbar">
+          <span id="pc-sel" class="hint">ยังไม่ได้เลือกสินค้า</span>
+          <button type="button" class="btn sm" id="pc-all">ติ๊กทั้งหน้า</button>
+          <button type="button" class="btn sm ghost" id="pc-none">ล้างที่ติ๊ก</button>
+          <span id="pd-count" class="hint"></span>
+        </div>
+        <ul id="pd-list" class="pd-list"></ul>
+        <div class="more-row"><button id="pd-more" class="btn" type="button" hidden>โหลดเพิ่ม</button></div>
+        <div id="pd-empty" class="pf-empty" hidden>
+          <p>ยังไม่มีสินค้าในคลัง</p>
+          <button type="button" class="btn sm primary" data-goto="1">← ไปขั้น 1 หาสินค้า</button>
+        </div>
+      </section>
+
+      <!-- ③ ทำคลิปสินค้า (Meta AI) -->
+      <section class="pf-pane" data-pane="3" hidden>
+        <div class="pf-card">
+          <div class="pf-make">
+            <span id="pc-sel3" class="pf-big">ยังไม่ได้เลือกสินค้า</span>
+            <label class="hint">เพลงเสริม <select id="pc-music"></select></label>
+            <button type="button" class="btn primary" id="pc-go" disabled>🎬 สร้างคลิปสินค้า</button>
+          </div>
+          <p id="pc-msg" class="hint" role="status"></p>
+        </div>
+        <ol class="pf-how">
+          <li><b>กด “สร้างคลิปสินค้า”</b> — สินค้าที่เลือกเข้าคิวเป็นร่างในคลังคลิป</li>
+          <li>เปิด <a href="https://www.meta.ai/" target="_blank" rel="noopener noreferrer">meta.ai</a> → แผง Arn Reels โหมด <b>“🛍 คลิปสินค้า”</b> วาง prompt + แนบรูปให้ <b>คุณกดสร้างเอง</b> แล้วกด “✅ ส่งเข้า Arn Reels”</li>
+          <li>กลับมาที่คลังคลิป → <b>“🎞 ใส่ข้อความ + ทำคลิปเสร็จ”</b> → คัดลอกแคปชัน + คอมเมนต์ (ลิงก์) ไปโพสต์ที่เพจ</li>
+        </ol>
+        <details class="pc-set pd-import">
+          <summary>⚙ ตั้งค่า prompt / ตัวอักษร (ตั้งครั้งเดียว ไม่ต้องแตะทุกครั้ง)</summary>
+          <label class="check"><input type="checkbox" id="pc-overlay"> ให้ Arn Reels ใส่ข้อความ “Introducing ♡ / ขอแนะนำ / ชื่อสินค้า” เอง (ตัวไทยถูกเสมอ — สั่ง Meta AI เว้นที่ว่างแทน)</label>
+          <div class="row">
+            <span class="hint">รูปอ้างอิงตัวอักษร (โทรศัพท์สีชมพู):</span>
+            <img id="pc-typo-img" class="pc-thumb" alt="รูปอ้างอิงตัวอักษร" hidden>
+            <button type="button" class="btn sm" id="pc-typo-up">📎 อัปโหลด</button>
+            <button type="button" class="btn sm ghost" id="pc-typo-del" hidden>ลบ</button>
+          </div>
+          <label class="field">เทมเพลต prompt <span class="hint">ช่องที่ระบบเติมให้: [ชื่อแบรนด์] [ชื่อสินค้า] [คำอ่าน หากจำเป็น] · “TikTok and Shopee” เปลี่ยนเป็น Facebook Reels อัตโนมัติ</span>
+            <textarea id="pc-tpl" rows="10" spellcheck="false"></textarea>
+          </label>
+          <div class="row">
+            <button type="button" class="btn sm primary" id="pc-save">บันทึกตั้งค่า</button>
+            <button type="button" class="btn sm ghost" id="pc-reset">คืนค่าเทมเพลต V4.0</button>
+          </div>
+        </details>
+      </section>
+    </div>
+    <div class="pf-nav">
+      <button type="button" class="btn ghost" id="pf-back">← ย้อนกลับ</button>
+      <button type="button" class="btn primary" id="pf-next">ถัดไป →</button>
+    </div>
+    <div class="set-foot">
+      <p id="pd-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="pd-close" hidden>ปิด</button>
+    </div>
+  </div>
+</section>
+  <!-- ซีรีส์รายวัน: หน้าเดิม (series.html) ฝังไว้ในแท็บ ไม่เปลี่ยนหน้า -->
+  <section id="seriesview" class="pview" aria-label="ซีรีส์รายวัน"><iframe id="series-frame" title="ซีรีส์รายวัน" loading="lazy"></iframe></section>
+  <!-- ตารางโพสต์: แถว = เวลา · คอลัมน์ = ช่องทาง -->
+  <section id="schedview" class="pview" aria-labelledby="sc-h">
+    <div class="sc-head">
+      <h2 id="sc-h">ตารางโพสต์</h2>
+      <div id="sc-days" class="seg" role="group" aria-label="เลือกวัน"></div>
+      <span class="act-gap"></span>
+      <button type="button" class="btn" id="sc-channels">ช่องทาง / เวลาประจำ</button>
+      <button type="button" class="btn primary" id="sc-fill">จัดคลิปพร้อมโพสต์ลงช่องว่างให้</button>
+    </div>
+    <div id="sc-due" class="due-bar" hidden></div>
+    <div class="sc-wrap"><table class="sc-table" id="sc-table"></table></div>
+    <div class="row sc-foot">
+      <span class="hint">เพิ่มเวลาเฉพาะวันนี้:</span>
+      <select id="sc-add-ch" aria-label="ช่องทาง"></select>
+      <input id="sc-add-t" type="time" value="20:00" aria-label="เวลา">
+      <button type="button" class="btn sm" id="sc-add">＋ เพิ่มช่อง</button>
+      <span class="hint">· ถึงเวลาแล้วหน้าเว็บจะเตือน (ต้องเปิด Arn Reels ไว้) · ตั้งเวลาใน Meta Business Suite / YouTube Studio เองแล้วกด “ตั้งเวลาแล้ว” ได้</span>
+    </div>
+  </section>
+  <!-- หน้าวันนี้: เป้าวันนี้ + ทำต่อจากตรงนี้ + สายพานคลิปสินค้า + ทางลัด -->
+  <section id="today" class="today" aria-labelledby="td-h">
+    <h2 id="td-h" class="sr-only">วันนี้</h2>
+    <div class="td-top">
+      <div class="td-card">
+        <div class="td-label">เป้าวันนี้ แยกตามช่องทาง <button type="button" class="linkbtn" id="td-goal-edit">จัดการช่องทาง</button></div>
+        <div id="td-goals" class="td-goals"></div>
+        <div class="hint" id="td-goal-note">คลิปเดียวโพสต์ได้หลายช่องทาง · นับเมื่อกด “โพสต์แล้ว” ของช่องทางนั้น</div>
+      </div>
+      <div class="td-card td-next">
+        <div id="td-due" class="due-bar" hidden></div>
+        <div class="td-label">ทำต่อจากตรงนี้</div>
+        <div class="td-next-t" id="td-next-t">…</div>
+        <div class="row"><button type="button" class="btn primary" id="td-next-go" hidden></button></div>
+      </div>
+    </div>
+    <div class="td-card td-quests" id="td-quests"></div>
+    <h3 class="td-h3">คลิปอยู่ขั้นไหนบ้าง</h3>
+    <div class="td-pipe" id="td-pipe"></div>
+    <div class="td-top">
+      <div class="td-card">
+        <label class="td-label" for="td-kw">หาสินค้าเพิ่มใน Shopee</label>
+        <div class="row td-kwrow"><input id="td-kw" type="search" maxlength="80" placeholder="เช่น ของใช้ในบ้าน" autocomplete="off"><button type="button" class="btn" id="td-kw-go">🔎 หาใน Shopee</button></div>
+        <div class="hint">เปิดเว็บ Shopee Affiliate แล้วแผง Arn Reels มุมขวาล่างค้นให้</div>
+      </div>
+      <div class="td-card">
+        <div class="td-label">โพสต์รูป (นับเควส “โพสต์ที่มีรูปภาพ”)</div>
+        <div class="td-quick">
+          <button type="button" class="btn" data-photo="news">📰 การ์ดข่าววันนี้</button>
+          <button type="button" class="btn" data-photo="ask">💬 โพสต์ชวนคุย</button>
+          <button type="button" class="btn" data-photo="product">🛍 รูปสินค้า</button>
+          <button type="button" class="btn" data-photo="mix">🔀 ผสมทั้ง 3 แบบ</button>
+        </div>
+        <label class="hint">จำนวนต่อครั้ง <select id="ph-count"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>6</option></select> · ข่าว = ข่าวเด่น + บันเทิงวันนี้ (AI ค้นจากเว็บ)</label>
+      </div>
+      <div class="td-card">
+        <div class="td-label">สร้างคลิปอย่างอื่น</div>
+        <div class="td-quick">
+          <button type="button" class="btn" data-quick="make">＋ คลิปเร็ว</button>
+          <button type="button" class="btn" data-quick="news">＋ คลิปข่าว</button>
+          <button type="button" class="btn" data-quick="story">＋ เรื่องหลายช็อต</button>
+          <a class="btn" href="#series">ตอนซีรีส์วันนี้</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ซ้าย: สตูดิโอ 4 ขั้นตอน -->
   <section class="studio surface" id="studio" data-mode="make" aria-labelledby="studio-h">
     <h2 id="studio-h">สร้างคลิปใหม่</h2>
-    <div id="mode" class="seg mode" role="group" aria-label="โหมดการสร้าง">
-      <button type="button" data-m="make" aria-pressed="true">✍ คลิปเร็ว</button>
-      <button type="button" data-m="news" aria-pressed="false">📰 ข่าว</button>
-      <button type="button" data-m="story" aria-pressed="false" title="เรื่องหลายช็อต: สร้างรูป/คลิปทีละช็อตแล้วรวม — มีคลังตัวละครคุมหน้าตาให้ต่อเนื่อง">🎞 เรื่องหลายช็อต</button>
+    <p class="mode-q">จะทำคลิปแบบไหน</p>
+    <div id="mode" class="mode-cards" role="group" aria-label="แบบคลิป">
+      <button type="button" data-m="make" aria-pressed="true"><b>✍ คลิปเร็ว</b><span>พิมพ์เนื้อหา → ข้อความบนจอ + รูป + เสียงพากย์ เรนเดอร์ในเครื่อง · หรือให้ AI คิด prompt ไปสร้างวิดีโอบน Meta AI</span></button>
+      <button type="button" data-m="news" aria-pressed="false"><b>📰 คลิปข่าว</b><span>ค้นข่าว/วางลิงก์ → เรียบเรียงใหม่ + ใส่ที่มา</span></button>
+      <button type="button" data-go="products"><b>🛍 คลิปสินค้า</b><span>จากคลังสินค้า Shopee · prompt ไวรัล 4 ช็อต → Meta AI</span></button>
+      <button type="button" data-m="story" aria-pressed="false" title="เรื่องหลายช็อต: สร้างรูป/คลิปทีละช็อตแล้วรวม — มีคลังตัวละครคุมหน้าตาให้ต่อเนื่อง"><b>🎞 เรื่องหลายช็อต</b><span>หนังสั้น ตัวละครเดิมทุกช็อต รวมเป็นคลิปเดียว</span></button>
     </div>
     <p class="make-only news-note" style="opacity:.8">คลิปเดียว: พิมพ์เนื้อหา → AI แบ่งข้อความบนจอ → เรนเดอร์ในเบราว์เซอร์รวดเดียว (พื้นหลัง: ธีม/รูปจากที่มา/รูปที่สร้างเอง)</p>
     <p class="news-only news-note">เรียบเรียงข่าวด้วยถ้อยคำของเรา + ใส่ที่มา ·
@@ -47,6 +276,15 @@
       <label class="field">ป้ายบนคลิป <span class="hint">ไม่บังคับ เช่น “ตอนที่ 20” หรือ “สปอย · ตอนที่ 20” — ขึ้นป้ายเล็กมุมขวาบนทุกฉาก</span>
         <input id="f-badge" maxlength="40" placeholder="เช่น ตอนที่ 20" autocomplete="off">
       </label>
+      <!-- โหมดข่าว: พิมพ์หัวข้อ → AI ค้นข่าวล่าสุดจากหลายสำนัก → ใส่เนื้อข่าว + ที่มาให้ -->
+      <div class="field news-only" id="nf">
+        <div class="field-label">🔎 ให้ AI ค้นข่าวจากหัวข้อ <span class="hint">ค้นข่าวล่าสุดหลายสำนัก แล้วใส่เนื้อข่าว + ลิงก์ที่มาให้ (ใช้ Claude Code)</span></div>
+        <div class="rss-bar">
+          <input id="f-newsq" maxlength="200" placeholder="เช่น Binance โดนแฮ็ก เงินในนั้นยังปลอดภัยไหม (เว้นว่าง = ใช้ชื่อคลิป)" autocomplete="off">
+          <button id="b-findnews" class="btn sm primary" type="button">🔎 ค้นข่าว</button>
+        </div>
+        <p id="nf-note" class="hint" hidden></p>
+      </div>
       <!-- โหมดข่าว: เลือกข่าวจากฟีด RSS ที่เพิ่มไว้ -->
       <div id="rss" class="rss news-only">
         <div class="field-label">ข่าวจากฟีด RSS</div>
@@ -159,6 +397,10 @@
         <span class="switch" aria-hidden="true"></span>
         <span class="toggle-text">🎙 เสียงพากย์ไทย <small id="voice-note">อ่านข้อความทีละฉาก</small></span>
       </label>
+      <label class="field">สไตล์เสียงพากย์
+        <select id="f-tone"></select>
+        <span class="hint">ชุดเดียวกับเรื่องหลายช็อต/ซีรีส์ · น้ำเสียงต่างกันได้เฉพาะเสียง Gemini (ตั้งค่า → เสียงพากย์)</span>
+      </label>
       <label class="field">เพลงพื้นหลัง
         <select id="f-music"></select>
         <span class="hint">"สร้างสด" = เพลงต้นฉบับ ไม่มีลิขสิทธิ์ · ไฟล์ของคุณวางในโฟลเดอร์ <code>music/</code></span>
@@ -198,6 +440,7 @@
       <button type="button" data-k="" aria-pressed="true">ทุกชนิด</button>
       <button type="button" data-k="quick" aria-pressed="false">✍ คลิปเร็ว</button>
       <button type="button" data-k="story" aria-pressed="false">🎞 เรื่อง</button>
+      <button type="button" data-k="product" aria-pressed="false">🛍 สินค้า</button>
     </div>
     <div id="grid"></div>
     <div class="more-row"><button id="more" class="btn" type="button" hidden>โหลดเพิ่ม</button></div>
@@ -357,71 +600,7 @@
   </form>
 </dialog>
 
-<!-- คลังสินค้าแอฟฟิลิเอต: เก็บลิงก์ที่ผู้ใช้มี (Shopee ฯลฯ) — ค้นหา/เพิ่ม/แก้/นำเข้าหลายรายการ -->
-<dialog id="products" aria-labelledby="pd-h">
-  <div class="set pr">
-    <div class="set-head">
-      <div><h2 id="pd-h">🛍 คลังสินค้าแอฟฟิลิเอต</h2><div class="hint">เก็บลิงก์สินค้า (Shopee ฯลฯ) ที่คุณมีไว้ที่นี่ — AI เลือกให้ว่าคลิปไหนควรแปะสินค้าไหน</div></div>
-      <button type="button" class="btn ghost icon" id="pd-x" aria-label="ปิด">✕</button>
-    </div>
-    <div class="pr-body">
-      <form id="pd-form" class="pd-form">
-        <input id="pd-name" maxlength="150" placeholder="ชื่อสินค้า" autocomplete="off" required>
-        <input id="pd-url" type="url" maxlength="500" placeholder="ลิงก์แอฟฟิลิเอต (https://…)" autocomplete="off" required>
-        <input id="pd-tags" maxlength="200" placeholder="แท็ก/หมวด เช่น ความงาม, ครัว (ไม่บังคับ)" autocomplete="off">
-        <input id="pd-note" maxlength="300" placeholder="โน้ต เช่น จุดเด่น/ขนาด (ไม่บังคับ)" autocomplete="off">
-        <input id="pd-sales" type="number" min="0" step="1" inputmode="numeric" placeholder="ยอดขาย (ตัวเลข ไม่บังคับ)" title="ไว้จัดอันดับ “ขายดี” — ใส่จากแดชบอร์ด Shopee Affiliate ของคุณ">
-        <button type="submit" class="btn primary" id="pd-add">＋ เพิ่มสินค้า</button>
-      </form>
-      <!-- สินค้าที่เคยลงคลิปแล้วในแอป Pondy บนมือถือ (อ่านผ่าน adb ไม่แก้ไขอะไรบนมือถือ) -->
-      <details class="pd-import" id="pd-pondy">
-        <summary>📱 ดึงจากแอป Pondy บนมือถือ (สินค้าที่ลงคลิปแล้ว)</summary>
-        <p class="hint">ต่อมือถือเข้าคอม (เปิด USB debugging) แล้วกด “ตรวจมือถือ” — อ่านเฉพาะสินค้าที่โพสต์แล้วพร้อมลิงก์ (ส่วนใหญ่เป็นลิงก์สินค้า Shopee ธรรมดา ไม่ใช่ลิงก์แอฟฟิลิเอต — ดูคำเตือนในหน้าแนะนำสินค้า) ไม่แก้ไขข้อมูลบนมือถือ</p>
-        <div class="row"><button type="button" class="btn sm" id="pp-scan">🔌 ตรวจมือถือ</button></div>
-        <div id="pp-devs" class="pp-devs"></div>
-        <div id="pp-opts" class="pp-opts" hidden>
-          <label>ค้นชื่อ/คีย์เวิร์ด <input id="pp-q" placeholder="เว้นว่าง = ทั้งหมด" autocomplete="off"></label>
-          <label>โพสต์ภายใน
-            <select id="pp-days">
-              <option value="0.0417">1 ชั่วโมงล่าสุด</option>
-              <option value="0.25">6 ชั่วโมงล่าสุด</option>
-              <option value="1">1 วันล่าสุด</option>
-              <option value="7">7 วันล่าสุด</option>
-              <option value="30" selected>30 วันล่าสุด</option>
-              <option value="0">ทั้งหมด</option>
-            </select>
-          </label>
-          <label>แสดงให้เลือกทีละ (รายการ) <input id="pp-limit" type="number" min="1" max="200" step="1" value="10" inputmode="numeric"></label>
-          <div class="row"><button type="button" class="btn sm primary" id="pp-preview">ดูรายการให้เลือก</button><button type="button" class="btn sm danger" id="pp-clear" title="ลบสินค้าที่นำเข้าจากมือถือทั้งหมด (สินค้าที่เพิ่มเองไม่ถูกลบ)">🗑 ล้างที่นำเข้า</button></div>
-          <p id="pp-info" class="hint"></p>
-          <div id="pp-pick" class="pp-pick" hidden>
-            <div class="row"><button type="button" class="btn sm ghost" id="pp-all">เลือกทั้งหมด</button><button type="button" class="btn sm ghost" id="pp-none">ไม่เลือก</button><span id="pp-sel" class="hint"></span></div>
-            <ul id="pp-list" class="pp-list"></ul>
-            <div class="row"><button type="button" class="btn" id="pp-more">＋ แสดงเพิ่มอีก 10</button><button type="button" class="btn primary" id="pp-import">นำเข้าที่เลือก</button></div>
-          </div>
-        </div>
-      </details>
-      <details class="pd-import">
-        <summary>วางหลายรายการพร้อมกัน</summary>
-        <p class="hint">1 บรรทัด = 1 สินค้า รูปแบบ <code>ชื่อ | ลิงก์ | แท็ก | โน้ต | ยอดขาย</code> (แท็ก โน้ต ยอดขาย ไม่ต้องใส่ก็ได้ ลิงก์ซ้ำจะข้ามให้)</p>
-        <textarea id="pd-bulk" rows="5" placeholder="ครีมกันแดดสูตรเย็น | https://s.shopee.co.th/xxxx | ความงาม | SPF50 | 1250&#10;หม้อทอดไร้น้ำมัน | https://s.shopee.co.th/yyyy | ครัว | | 830"></textarea>
-        <button type="button" class="btn" id="pd-bulk-go">นำเข้า</button>
-      </details>
-      <div class="lib-tools">
-        <input id="pd-q" type="search" placeholder="🔍 ค้นหาสินค้า (ชื่อ/แท็ก/โน้ต)" aria-label="ค้นหาสินค้า">
-        <select id="pd-sort" aria-label="เรียงสินค้า"><option value="new">เพิ่มล่าสุดก่อน</option><option value="posted">โพสต์ล่าสุดก่อน</option><option value="sales">ขายดีก่อน</option></select>
-      </div>
-      <p id="pd-count" class="hint"></p>
-      <ul id="pd-list" class="pd-list"></ul>
-      <div class="more-row"><button id="pd-more" class="btn" type="button" hidden>โหลดเพิ่ม</button></div>
-      <p id="pd-empty" class="muted" hidden>ยังไม่มีสินค้า — เพิ่มด้านบน หรือวางหลายรายการพร้อมกัน</p>
-    </div>
-    <div class="set-foot">
-      <p id="pd-msg" class="msg" role="status" aria-live="polite"></p>
-      <button type="button" class="btn ghost" id="pd-close">ปิด</button>
-    </div>
-  </div>
-</dialog>
+
 
 <!-- สินค้าที่ AI เลือกให้เข้ากับคลิป: ชื่อลิงก์ + URL + ประโยคชวน คัดลอกไปวางตอนเพิ่ม "สินค้าแอฟฟิลิเอต" บน Facebook -->
 <dialog id="recs" aria-labelledby="rc-h">
@@ -588,6 +767,48 @@
 </div>
 
 <!-- หน้าต่างถามยืนยัน/ถามค่า ในตัวแอป (แทน confirm()/prompt() ของเบราว์เซอร์ ซึ่งบางหน้าจอไม่รองรับ) -->
+<!-- ช่องทางโพสต์: หลายเพจ Facebook + ช่อง YouTube -->
+<dialog id="channels" aria-labelledby="ch-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="ch-h">ช่องทางโพสต์</h2><div class="hint">เพจ Facebook กี่เพจก็ได้ + ช่อง YouTube · แต่ละช่องทางมีเป้าต่อวัน เวลาประจำ และชนิดคลิปของตัวเอง</div></div>
+      <button type="button" class="btn ghost icon" id="ch-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="pr-body">
+      <div id="ch-list" class="ch-list"></div>
+      <div class="row"><button type="button" class="btn" id="ch-add-fb">＋ เพจ Facebook</button><button type="button" class="btn" id="ch-add-yt">＋ ช่อง YouTube</button></div>
+      <p class="hint">โพสต์อัตโนมัติยังไม่เปิด — ตอนนี้ใช้แผงโพสต์ทีละขั้น หรือให้ Claude เตรียมโพสต์ให้ตามเวลา (เพจ Liem)</p>
+    </div>
+    <div class="set-foot"><p id="ch-msg" class="msg" role="status" aria-live="polite"></p><button type="button" class="btn ghost" id="ch-close">ปิด</button></div>
+  </div>
+</dialog>
+
+<!-- แผงโพสต์ลงเพจ: ทำทีละขั้น ติ๊กเองเมื่อกดปุ่มของขั้นนั้น -->
+<dialog id="postpanel" class="drawer" aria-labelledby="pp2-h">
+  <div class="set pr">
+    <div class="set-head">
+      <div><h2 id="pp2-h">📤 โพสต์ลงเพจ</h2><div class="hint" id="pp2-sub"></div></div>
+      <button type="button" class="btn ghost icon" id="pp2-x" aria-label="ปิด">✕</button>
+    </div>
+    <div class="pr-body">
+      <nav class="pp2-chs" id="pp2-chs" aria-label="เลือกช่องทาง"></nav>
+      <ol class="post-steps" id="pp2-steps">
+        <li data-k="dl"><span class="dot">1</span><div><div class="row"><b>ดาวน์โหลดวิดีโอ</b><a class="btn sm" id="pp2-dl">⬇ ดาวน์โหลด</a></div></div></li>
+        <li data-k="yttitle" class="yt-only"><span class="dot">2</span><div><div class="row"><b>ชื่อคลิป (ไม่เกิน 100 ตัวอักษร)</b><button type="button" class="btn sm" id="pp2-ytt">📋 คัดลอก</button></div><pre class="post-text" id="pp2-yttext"></pre></div></li>
+        <li data-k="cap"><span class="dot">2</span><div><div class="row"><b id="pp2-cap-t">คัดลอกแคปชัน + แฮชแท็ก</b><button type="button" class="btn sm" id="pp2-cap">📋 คัดลอก</button></div><pre class="post-text" id="pp2-captext"></pre></div></li>
+        <li data-k="up"><span class="dot">3</span><div><div class="row"><b id="pp2-up-t">อัปโหลด Reels ที่เพจ</b><a class="btn sm" id="pp2-open" href="https://business.facebook.com/latest/home" target="_blank" rel="noopener noreferrer">↗ เปิด Meta Business Suite</a></div><p class="hint" id="pp2-up-h">แผง “🎬 Arn Reels · โพสต์” มุมซ้ายล่างช่วยแนบวิดีโอ + วางแคปชันให้ได้ (ส่วนเสริม v0.6)</p></div></li>
+        <li data-k="cmt" id="pp2-cmt-li" class="fb-only"><span class="dot">4</span><div><div class="row"><b>คอมเมนต์แรก (ลิงก์)</b><button type="button" class="btn sm" id="pp2-cmt">💬 คัดลอก</button></div><pre class="post-text" id="pp2-cmttext"></pre><p class="warn-note">วางเป็นคอมเมนต์ใต้โพสต์ ไม่ใส่ในแคปชัน</p></div></li>
+        <li data-k="url"><span class="dot">5</span><div><label class="field">ลิงก์โพสต์ (ไม่ใส่ก็ได้)<input id="pp2-url" type="url" placeholder="https://www.facebook.com/…" autocomplete="off"></label></div></li>
+      </ol>
+    </div>
+    <div class="set-foot">
+      <p id="pp2-msg" class="msg" role="status" aria-live="polite"></p>
+      <button type="button" class="btn ghost" id="pp2-next" hidden>คลิปถัดไป →</button>
+      <button type="button" class="btn primary" id="pp2-done">✅ โพสต์แล้ว</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="ask" aria-labelledby="ask-t">
   <form method="dialog" class="ask">
     <h3 id="ask-t"></h3>
@@ -602,6 +823,7 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script src="generators.js"></script>
+<script src="tplb.js"></script>
 <script src="render.js"></script>
 <script src="app.js"></script>
 <script src="story.js"></script>

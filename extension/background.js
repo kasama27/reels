@@ -48,6 +48,23 @@ async function handle(m) {
       const bytes = b64ToBytes(m.b64);
       return call(`/ext/shots/${Number(m.shotId)}/video`, { method: 'PUT', headers: { 'content-type': m.mime }, body: bytes });
     }
+    // คลิปสินค้า: คิวถัดไป / รูปที่ต้องแนบ (ไบต์ → base64 ให้ content script สร้างไฟล์) / ส่งวิดีโอดิบกลับ
+    case 'productNext': return call('/ext/products/next');
+    // หาสินค้าบน affiliate.shopee.co.th: เช็กว่ามีในคลังแล้วไหม / ส่งที่ติ๊กเข้าคลัง (+ คิวคลิปสินค้า)
+    case 'shopeeKnown': return call('/ext/products/known', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: m.ids }) });
+    case 'shopeeImport': return call('/ext/products/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items: m.items, queue: !!m.queue }) });
+    case 'productImage': {
+      const s = await settings();
+      if (!/^[0-9a-f]{40}\.(jpg|png|webp)$/.test(String(m.file))) throw new Error('ชื่อรูปไม่ถูกต้อง');
+      let r;
+      try { r = await fetch(`${s.serverUrl}/ext/img/${m.file}`, { headers: { 'x-arn-token': s.token } }); } catch { throw new Error('ต่อ Arn Reels ไม่ได้'); }
+      if (!r.ok) throw new Error(`ดึงรูปไม่ได้ (HTTP ${r.status})`);
+      return { mime: (r.headers.get('content-type') || 'image/jpeg').split(';')[0], b64: bytesToB64(new Uint8Array(await r.arrayBuffer())) };
+    }
+    case 'uploadRaw': {
+      const bytes = b64ToBytes(m.b64);
+      return call(`/ext/clips/${Number(m.clipId)}/raw`, { method: 'PUT', headers: { 'content-type': m.mime }, body: bytes });
+    }
     case 'fetchRemote': { // ดึงไฟล์วิดีโอจาก CDN ของ Meta (ใช้คุกกี้ของเบราว์เซอร์ตามปกติ)
       let u;
       try { u = new URL(m.url); } catch { throw new Error('ลิงก์วิดีโอไม่ถูกต้อง'); }
@@ -58,6 +75,33 @@ async function handle(m) {
       if (buf.length > MAX_BYTES) throw new Error('วิดีโอใหญ่เกิน 45MB — ดาวน์โหลดแล้วแนบเองในหน้าโปรเจกต์แทน');
       return { mime: (r.headers.get('content-type') || 'video/mp4').split(';')[0], b64: bytesToB64(buf) };
     }
+    // โพสต์ลงเพจ: คลิปพร้อมโพสต์ถัดไป / วิดีโอทีละชิ้น (ข้อความระหว่างส่วนของ extension ใหญ่ไม่ได้) / บันทึกว่าโพสต์แล้ว
+    case 'postNext': return call(`/ext/post/next${m.photo ? '?type=photo' : ''}`);
+    case 'postPhoto': {
+      const s = await settings();
+      let r;
+      try { r = await fetch(`${s.serverUrl}/ext/clips/${Number(m.clipId)}/photo`, { headers: { 'x-arn-token': s.token } }); } catch { throw new Error('ต่อ Arn Reels ไม่ได้'); }
+      if (!r.ok) throw new Error(`ดึงรูปโพสต์ไม่ได้ (HTTP ${r.status})`);
+      return { b64: bytesToB64(new Uint8Array(await r.arrayBuffer())) };
+    }
+    // เควสจากหน้าสถานะเพจ (facebook.com/professional_dashboard/status)
+    case 'questSync': return call('/ext/quests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ week: String(m.week || ''), items: Array.isArray(m.items) ? m.items.slice(0, 12) : [], channel: m.channel || '' }) });
+    case 'postChunk': {
+      const s = await settings();
+      const start = Math.max(0, Number(m.start) || 0), len = Math.min(8_000_000, Math.max(1, Number(m.len) || 0));
+      let r;
+      try { r = await fetch(`${s.serverUrl}/ext/clips/${Number(m.clipId)}/video`, { headers: { 'x-arn-token': s.token, range: `bytes=${start}-${start + len - 1}` } }); } catch { throw new Error('ต่อ Arn Reels ไม่ได้'); }
+      if (!r.ok) throw new Error(`ดึงวิดีโอไม่ได้ (HTTP ${r.status})`);
+      return { b64: bytesToB64(new Uint8Array(await r.arrayBuffer())) };
+    }
+    case 'postCover': {
+      const s = await settings();
+      let r;
+      try { r = await fetch(`${s.serverUrl}/ext/clips/${Number(m.clipId)}/cover`, { headers: { 'x-arn-token': s.token } }); } catch { throw new Error('ต่อ Arn Reels ไม่ได้'); }
+      if (!r.ok) { let e = ''; try { e = (await r.json()).error; } catch { /* ไม่มี */ } throw new Error(e || `ดึงหน้าปกไม่ได้ (HTTP ${r.status})`); }
+      return { b64: bytesToB64(new Uint8Array(await r.arrayBuffer())) };
+    }
+    case 'postDone': return call(`/ext/clips/${Number(m.clipId)}/posted`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fb_url: m.fbUrl || '' }) });
     default: throw new Error('คำสั่งไม่รู้จัก');
   }
 }

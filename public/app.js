@@ -28,6 +28,7 @@ const TASK_LABELS = [
   [/^\/api\/extract$/, 'AI กำลังอ่านรูป', 'AI กำลังอ่านรูป'],
   [/^\/api\/news\/rewrite$/, 'AI กำลังเรียบเรียงข่าว', 'AI กำลังเรียบเรียง'],
   [/^\/api\/news\/article$/, 'กำลังดึงเนื้อข่าว', 'กำลังดึงข่าว'],
+  [/^\/api\/news\/find$/, 'AI กำลังค้นข่าวจากเว็บ', 'AI กำลังค้นข่าว'],
   [/^\/api\/tts\/test$/, 'กำลังสร้างเสียงทดสอบ', 'กำลังสร้างเสียง'],
   [/^\/api\/feeds$/, 'กำลังตรวจฟีดข่าว', 'กำลังตรวจฟีด'],
   [/^\/api\/clips\/\d+\/products$/, 'กำลังเลือกสินค้า', 'กำลังเลือก'],
@@ -51,7 +52,11 @@ async function api(method, url, body, { quiet = false, signal } = {}) {
       signal: signal || ctrl?.signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      // หน้าเว็บใหม่กว่าเซิร์ฟเวอร์ที่รันอยู่ → บอกวิธีแก้ตรง ๆ แทน "ไม่มี endpoint นี้"
+      if (res.status === 404 && data.error === 'ไม่มี endpoint นี้') throw new Error('โปรแกรมเบื้องหลังยังเป็นรุ่นเก่า — ดับเบิลคลิก restart.bat ในโฟลเดอร์ reels แล้วกด Ctrl+F5 ที่หน้านี้');
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
     return data;
   } catch (e) {
     if (e.name === 'AbortError') throw new Error(STOPPED);
@@ -267,7 +272,7 @@ async function renderInBrowser(id, onProgress, onStatus = say) {
   let ok = false;
   try {
     const { blob, mime, duration, thumb, note } = await ReelRender.render(clip, th, {
-      canvas, voice: !!clip.voice, music: clip.music, target: clip.target_sec || 0, signal: ctrl.signal,
+      canvas, voice: !!clip.voice, tone: clip.narr_tone || '', music: clip.music, target: clip.target_sec || 0, signal: ctrl.signal,
       images: (() => { try { return JSON.parse(clip.images || '[]').map((p) => ({ url: `/clip-images/${p.file}`, credit: p.credit })); } catch { return []; } })(),
       logo: status.logo && status.brand?.logoOn !== false ? `/brand/logo.png?v=${status.logo.v}` : '',
       onProgress: (p) => { task.set(tid, 0.15 + p * 0.78, `กำลังอัดคลิป “${clip.title}”`); onProgress?.(p); },
@@ -292,6 +297,62 @@ async function renderInBrowser(id, onProgress, onStatus = say) {
   }
 }
 
+// คลิปสินค้า: วิดีโอดิบจาก Meta AI → ใส่ข้อความแนะนำไทย (ถ้าเปิดไว้) + เพลง/โลโก้ → อัดเป็นคลิปจริงของคลัง แล้วเขียนแคปชัน/คอมเมนต์ให้
+async function finishProduct(id) {
+  const clip = await api('GET', `/api/clips/${id}`);
+  if (!clip.raw_video) throw new Error('ยังไม่มีวิดีโอจาก Meta AI — ส่งเข้ามาด้วยส่วนเสริมบน meta.ai หรือกด “📎 แนบวิดีโอ Meta AI”');
+  const ps = await api('GET', '/api/product-clips/settings');
+  const th = status.themes.find((t) => t.id === clip.theme) || status.themes[0];
+  const canvas = document.createElement('canvas');
+  canvas.id = 'rec';
+  document.body.append(canvas);
+  const ctrl = new AbortController();
+  const tid = task.start(`คลิปสินค้า “${clip.title}”`, 0.02, 'กำลังทำคลิป', ctrl);
+  let ok = false;
+  try {
+    const { blob, mime, duration, thumb, cover } = await ReelRender.assemble([{ url: `/product-raw/${clip.raw_video}` }], {
+      canvas, aspect: '9:16', theme: th, keepAudio: true, voice: false, subs: false, music: clip.music, signal: ctrl.signal,
+      coverAt: ps.coverAt ?? 0.4, coverText: ps.coverText !== false, // หน้าปก Reels = เฟรมวินาทีที่ตั้ง (ค่าเริ่มต้น 0.4) + ข้อความแนะนำ
+      logo: status.logo && status.brand?.logoOn !== false ? `/brand/logo.png?v=${status.logo.v}` : '',
+      intro: ps.overlay ? { name: clip.title } : null,
+      onProgress: (p) => task.set(tid, 0.1 + p * 0.8, `กำลังอัดคลิป “${clip.title}”`),
+      onStatus: (t) => task.set(tid, 0.06, t),
+    });
+    task.set(tid, 0.92, 'กำลังบันทึกคลิปลงคลัง…');
+    if (thumb) await fetch(`/api/clips/${id}/thumb`, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: thumb }).catch(() => {});
+    if (cover) await fetch(`/api/clips/${id}/cover`, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: cover }).catch(() => {});
+    const res = await fetch(`/api/clips/${id}/video`, { method: 'PUT', headers: { 'content-type': mime, 'x-duration': String(duration) }, body: blob });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    ok = true;
+  } finally {
+    canvas.remove();
+    if (ok) task.set(tid, 1, 'ทำคลิปสินค้าเสร็จแล้ว ✓');
+    task.end(tid, ok ? 700 : 0);
+  }
+  if (!clip.caption && status.ai) {
+    await api('POST', `/api/clips/${id}/product-post`).catch((e) => toast(`ทำคลิปเสร็จแล้ว แต่ AI เขียนแคปชันไม่สำเร็จ: ${e.message}`, true));
+  }
+}
+
+// แนบวิดีโอจาก Meta AI เอง (กรณีส่วนเสริมส่งไม่ได้) → เป็นวิดีโอดิบของคลิปสินค้า
+function pickRawVideo(id) {
+  return new Promise((resolve, reject) => {
+    const inp = h('input', { type: 'file', accept: 'video/mp4,video/webm' });
+    inp.addEventListener('change', async () => {
+      const f = inp.files[0];
+      if (!f) return resolve(false);
+      try {
+        const res = await fetch(`/api/clips/${id}/raw`, { method: 'PUT', headers: { 'content-type': f.type || 'video/mp4' }, body: f });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        resolve(true);
+      } catch (e) { reject(e); }
+    });
+    inp.click();
+  });
+}
+
 // คัดลอกลงคลิปบอร์ด: ใช้ Clipboard API ก่อน ถ้าถูกบล็อก (เช่น ไม่ใช่ https) ถอยไปใช้ execCommand
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch { /* ลองทางสำรอง */ }
@@ -303,6 +364,14 @@ async function copyText(text) {
   try { ok = document.execCommand('copy'); } catch { /* ไม่รองรับ */ }
   ta.remove();
   return ok;
+}
+
+// ---------- ตัวเลือกสไตล์เสียงพากย์ ----------
+// รายการเดียวกับโปรเจกต์เรื่อง/ซีรีส์ (มาจากเซิร์ฟเวอร์) — เพิ่มสไตล์ใหม่ที่ story.NARR_TONES แล้วขึ้นที่นี่เอง
+function fillTone(sel, value) {
+  const tones = status.tones?.length ? status.tones : [{ id: 'plain', label: 'เล่าเรื่องธรรมดา' }];
+  sel.replaceChildren(...tones.map((t) => new Option(`🎙 ${t.label}`, t.id)));
+  sel.value = tones.some((t) => t.id === value) ? value : 'plain';
 }
 
 // ---------- ตัวเลือกเพลง ----------
@@ -543,7 +612,7 @@ function buildCard(c) {
   refs.dur = h('span', { class: 'dur', hidden: true });
   refs.img.addEventListener('error', () => { refs.img.hidden = true; refs.ph.hidden = false; refs.ph.textContent = '▶ เล่น'; });
   refs.thumb = h('button', { class: 'thumb', type: 'button', title: 'เล่นคลิป' }, refs.img, refs.ph, refs.play, refs.dur);
-  refs.thumb.addEventListener('click', () => openPlayer(c.id, entry.videoFile));
+  refs.thumb.addEventListener('click', () => (entry.photo ? window.open(`/photo/${entry.videoFile}`, '_blank', 'noopener') : openPlayer(c.id, entry.videoFile)));
 
   refs.title = h('div', { class: 'item-title' });
   refs.meta = h('div', { class: 'meta' });
@@ -558,6 +627,7 @@ function buildCard(c) {
   refs.script = h('textarea', { rows: 5, placeholder: 'ข้อความบนจอ (บรรทัดละ 1 จอ)' });
   refs.voice = h('input', { type: 'checkbox' });
   refs.music = h('select');
+  refs.tone = h('select', { title: 'สไตล์เสียงพากย์ (ชุดเดียวกับเรื่องหลายช็อต/ซีรีส์)' });
   refs.len = h('input', { type: 'number', min: 5, max: 90, step: 1, placeholder: 'อัตโนมัติ' });
   refs.err = h('div', { class: 'err' });
 
@@ -576,7 +646,7 @@ function buildCard(c) {
     title: refs.titleIn.value.trim() || refs.title.textContent, // เว้นว่าง = คงชื่อเดิม
     badge: refs.badgeIn.value.trim(),
     script: refs.script.value, caption: refs.caption.value, hashtags: refs.tags.value,
-    voice: refs.voice.checked, music: refs.music.value,
+    voice: refs.voice.checked, narr_tone: refs.tone.value, music: refs.music.value,
     target_sec: Math.round(Number(refs.len.value)) || 0,
   });
   const action = (label, fn, cls = '') => {
@@ -602,6 +672,22 @@ function buildCard(c) {
   refs.btnCopyAll = copyBtn('📋 คัดลอกแคปชัน + แฮชแท็ก', () => [capText(), tagText()].filter(Boolean).join('\n\n'), 'ยังไม่มีแคปชัน — กด “AI แคปชัน” หรือพิมพ์เอง', true);
   refs.btnCopyCap = copyBtn('คัดลอกแคปชัน', capText, 'ยังไม่มีแคปชัน');
   refs.btnCopyTags = copyBtn('# คัดลอกแฮชแท็ก', tagText, 'ยังไม่มีแฮชแท็ก');
+  // คลิปสินค้า: คอมเมนต์แรก (ลิงก์แอฟฟิลิเอต) · เขียนแคปชันสินค้าใหม่ · แนบวิดีโอดิบเอง
+  refs.btnCopyCmt = copyBtn('💬 คัดลอกคอมเมนต์ (ลิงก์)', () => (entry.fbComment || '').trim(), 'ยังไม่มีคอมเมนต์ — กด “✍ แคปชันสินค้า”');
+  refs.btnPPost = h('button', { class: 'btn sm', type: 'button', textContent: '✍ แคปชันสินค้า', title: 'ให้ AI เขียนแคปชันเพจ + คอมเมนต์แรกที่มีลิงก์แอฟฟิลิเอต' });
+  refs.btnPPost.addEventListener('click', () => guard(refs.btnPPost, async () => {
+    if ((refs.caption.value.trim()) && !(await uiConfirm('เขียนแคปชัน/แฮชแท็ก/คอมเมนต์ใหม่ทับของเดิม?', { title: 'แคปชันสินค้า', ok: 'เขียนใหม่' }))) return;
+    await api('POST', `/api/clips/${c.id}/product-post`);
+    await refresh();
+  }));
+  refs.btnRaw = h('button', { class: 'btn sm', type: 'button', textContent: '📎 แนบวิดีโอ Meta AI', title: 'แนบไฟล์วิดีโอที่ดาวน์โหลดจาก meta.ai เอง (ถ้าส่วนเสริมส่งให้ไม่ได้)' });
+  refs.btnRaw.addEventListener('click', () => guard(refs.btnRaw, async () => {
+    if (!(await pickRawVideo(c.id))) return;
+    toast('แนบวิดีโอแล้ว — กำลังใส่ข้อความและทำคลิป…');
+    await refresh();
+    await finishProduct(c.id);
+    await refresh();
+  }));
   refs.download = h('a', { class: 'btn sm dl' });
   refs.btnPrompts = h('button', { class: 'btn sm', type: 'button', textContent: '🎬 Prompt Meta AI' });
   refs.btnPrompts.addEventListener('click', () => guard(refs.btnPrompts, () => openPrompts(c.id, true)));
@@ -625,13 +711,20 @@ function buildCard(c) {
     await refresh();
   }));
 
+  // ปุ่มใหม่ของการ์ดแบบ "ปุ่มหลักปุ่มเดียวตามขั้น"
+  refs.btnMeta = h('a', { class: 'btn sm', href: 'https://www.meta.ai/', target: '_blank', rel: 'noopener noreferrer', textContent: '↗ เปิด meta.ai', title: 'แผง Arn Reels บน meta.ai (โหมด 🛍 คลิปสินค้า) วาง prompt + แนบรูปให้ คุณกดสร้างเอง' });
+  refs.btnPost = h('button', { class: 'btn sm', type: 'button', textContent: '📤 โพสต์ลงเพจ' });
+  refs.btnPost.addEventListener('click', () => openPostPanel(c.id));
+  refs.fbLink = h('a', { class: 'btn sm', target: '_blank', rel: 'noopener noreferrer', textContent: '↗ ดูโพสต์' });
   refs.btnSave = action('💾 บันทึก', async () => { await save(); toast('บันทึกแล้ว'); });
   refs.btnCaption = action('✨ AI แคปชัน', async () => { await save(); await api('POST', `/api/clips/${c.id}/caption`); });
   const doRender = async () => {
     // มีวิดีโออยู่แล้ว → เรนเดอร์ใหม่จะทับไฟล์เดิม (และล้างสถานะ "โพสต์แล้ว") ถามก่อน
     const now = await api('GET', `/api/clips/${c.id}`);
-    if (now.video_file && !(await uiConfirm(`เรนเดอร์ใหม่จะทับวิดีโอเดิมของ “${now.title}”${now.status === 'posted' ? ' และล้างสถานะ “โพสต์แล้ว”' : ''}?`, { title: 'เรนเดอร์ใหม่', ok: 'เรนเดอร์ทับ' }))) return;
+    if (now.video_file && now.kind !== 'photo' && !(await uiConfirm(`เรนเดอร์ใหม่จะทับวิดีโอเดิมของ “${now.title}”${now.status === 'posted' ? ' และล้างสถานะ “โพสต์แล้ว”' : ''}?`, { title: 'เรนเดอร์ใหม่', ok: 'เรนเดอร์ทับ' }))) return;
     await save();
+    if (c.kind === 'product') { await finishProduct(c.id); await refresh(); return; }
+    if (c.kind === 'photo') { await makePhotoFile(await api('GET', `/api/clips/${c.id}`)); await refresh(); return; }
     await renderInBrowser(c.id); // ปุ่มแสดง ⏳ กำลังอัดคลิป · NN% ผ่านระบบ task เอง (กด ✕ หยุด ที่การ์ดได้)
     await refresh();
   };
@@ -646,6 +739,7 @@ function buildCard(c) {
   }, 'danger');
 
   fillMusic(refs.music, c.music);
+  fillTone(refs.tone, c.narr_tone);
   refs.editBody = h('div', { class: 'edit-body', hidden: true },
     h('label', {}, h('span', { class: 'cap-label', textContent: 'ชื่อคลิป (แก้แล้วกด “💾 บันทึก”)' }), refs.titleIn),
     h('label', {}, h('span', { class: 'cap-label', textContent: 'ป้ายมุมคลิป' }), refs.badgeIn),
@@ -654,6 +748,7 @@ function buildCard(c) {
     h('label', {}, h('span', { class: 'cap-label', textContent: 'ข้อความบนจอ (บรรทัดละ 1 จอ)' }), refs.script),
     h('div', { class: 'audio-row' },
       h('label', {}, refs.voice, '🎙 เสียงพากย์ไทย'),
+      h('label', {}, refs.tone),
       h('label', {}, '🎵 เพลง', refs.music),
       h('label', { class: 'len-line' }, '⏱ ความยาวเป้าหมาย', refs.len, 'วินาที')),
     h('div', { class: 'actions' }, refs.btnSave, refs.btnRender, refs.btnCaption));
@@ -666,15 +761,110 @@ function buildCard(c) {
     refs.btnEdit.setAttribute('aria-expanded', String(open));
   });
 
+  // แถวปุ่ม: [ปุ่มหลัก] [ปุ่มรอง] … [✎ แก้ไข] [⋯] — updateCard ย้ายปุ่มเข้า/ออกจากเมนูตามขั้นของคลิป
+  refs.hint = h('div', { class: 'step-hint', hidden: true });
+  refs.chans = h('div', { class: 'ch-chips', hidden: true, 'aria-label': 'สถานะแต่ละช่องทาง' });
+  refs.main = h('div', { class: 'act-main' });
+  refs.menuList = h('div', { class: 'more-list', role: 'menu' });
+  refs.more = h('details', { class: 'card-more' }, h('summary', { class: 'btn sm ghost', title: 'คำสั่งอื่น', 'aria-label': 'คำสั่งอื่น', textContent: '⋯' }), refs.menuList);
+  refs.menuList.addEventListener('click', (e) => { if (e.target.closest('button, a')) refs.more.open = false; });
+  refs.actions = h('div', { class: 'actions' }, refs.main, h('span', { class: 'act-gap' }), refs.btnEdit, refs.more);
   entry.el = h('article', { class: 'item' },
     refs.thumb,
     h('div', { class: 'item-main' },
       h('div', { class: 'item-head' }, h('div', { class: 'item-titles' }, refs.title, refs.meta, refs.source), refs.badge),
       refs.snippet, refs.tagline,
-      h('div', { class: 'actions' }, refs.btnRenderNow, refs.btnCopyAll, refs.btnCopyCap, refs.btnCopyTags, refs.download, refs.btnPrompts, refs.btnImg, refs.btnExpand, refs.btnProducts, refs.btnPosted, refs.btnEdit, refs.btnDel),
+      refs.chans, refs.hint, refs.actions,
       refs.err, refs.editBody));
   return entry;
 }
+
+// ---------- แผงโพสต์ลงเพจ (ทีละขั้น) ----------
+let ppClip = null, ppCh = null;
+let channels = [];
+async function loadChannels() { channels = await api('GET', '/api/channels'); return channels; }
+const chBadge = (ch) => h('span', { class: `ch-badge ${ch.kind}`, textContent: ch.kind === 'yt' ? 'YT' : 'FB' });
+const postedOn = (c, chId) => (c.posts || []).some((p) => p.channel_id === chId);
+const chFits = (ch, c) => (c.kind === 'photo' ? ch.kind === 'fb' : !ch.kinds || ch.kinds.split(',').includes(c.kind));
+const ppMark = (k) => { const li = document.querySelector(`#pp2-steps li[data-k="${k}"]`); if (li) li.classList.add('done'); };
+async function openPostPanel(id, channelId = null) {
+  [ppClip] = await Promise.all([api('GET', `/api/clips/${id}`), loadChannels()]);
+  if (ppClip.kind === 'photo') { // โพสต์รูป: เปิดหน้า "สร้างโพสต์" ของ Business Suite — แผง Arn Reels ในหน้านั้นแนบรูป + แคปชันให้
+    window.open('https://business.facebook.com/latest/composer', '_blank', 'noopener');
+    toast('เปิดหน้าสร้างโพสต์แล้ว — แผง Arn Reels มุมซ้ายล่าง: 📎 แนบรูป → ✍ วางแคปชัน');
+    return;
+  }
+  const c = ppClip, isProd = c.kind === 'product';
+  const act = channels.filter((x) => x.active);
+  ppCh = act.find((x) => x.id === channelId) || act.find((x) => chFits(x, c) && !postedOn(c, x.id)) || act[0] || null;
+  $('pp2-chs').replaceChildren(...act.map((x) => {
+    const b = h('button', { type: 'button', class: 'pp2-ch', 'aria-pressed': String(x === ppCh) }, chBadge(x), `${x.name}${postedOn(c, x.id) ? ' ✓' : ''}`);
+    b.addEventListener('click', () => openPostPanel(c.id, x.id));
+    return b;
+  }));
+  $('pp2-chs').hidden = act.length < 2;
+  const yt = ppCh && ppCh.kind === 'yt';
+  $('pp2-steps').classList.toggle('yt', !!yt);
+  $('pp2-cap-t').textContent = yt ? 'คัดลอกคำอธิบาย' : 'คัดลอกแคปชัน + แฮชแท็ก';
+  $('pp2-yttext').textContent = ytTitle(c);
+  $('pp2-up-t').textContent = yt ? 'อัปโหลด Shorts ที่ YouTube Studio' : `อัปโหลด Reels ที่เพจ ${ppCh ? ppCh.name : ''}`;
+  $('pp2-open').textContent = yt ? '↗ เปิด YouTube Studio' : '↗ เปิด Meta Business Suite';
+  $('pp2-open').href = yt ? 'https://studio.youtube.com/' : 'https://business.facebook.com/latest/home';
+  $('pp2-up-h').textContent = yt ? 'Shorts กดลิงก์ในคำอธิบาย/คอมเมนต์ไม่ได้ — ใส่ลิงก์สินค้าไว้ที่หน้าช่องแทน' : 'แผง “🎬 Arn Reels · โพสต์” มุมซ้ายล่างช่วยแนบวิดีโอ + วางแคปชันให้ได้ (ส่วนเสริม v0.6)';
+  $('pp2-done').textContent = ppCh ? `✅ โพสต์ลง ${ppCh.name} แล้ว` : '✅ โพสต์แล้ว';
+  // เลขขั้นตามที่มองเห็น (YouTube มีขั้นชื่อคลิป / Facebook มีขั้นคอมเมนต์)
+  [...$('pp2-steps').children].filter((li) => getComputedStyle(li).display !== 'none' && !li.hidden).forEach((li, i) => { li.querySelector('.dot').textContent = String(i + 1); });
+  for (const li of document.querySelectorAll('#pp2-steps li')) li.classList.remove('done');
+  $('pp2-sub').textContent = `${isProd ? '🛍 ' : ''}${c.title}${c.duration ? ` · ${Math.round(c.duration)} วิ` : ''}`;
+  $('pp2-dl').href = `/media/${c.id}.mp4`;
+  $('pp2-dl').download = `reel-${c.id}.mp4`;
+  $('pp2-captext').textContent = ppText(c) || '(ยังไม่มีแคปชัน — กด ✎ แก้ไข → ✨ AI แคปชัน)';
+  $('pp2-cmt-li').hidden = !isProd;
+  $('pp2-cmttext').textContent = c.fb_comment || '(ยังไม่มีคอมเมนต์ — ⋯ → ✍ แคปชันสินค้า)';
+  $('pp2-url').value = ((c.posts || []).find((p) => ppCh && p.channel_id === ppCh.id) || {}).url || '';
+  $('pp2-url').placeholder = yt ? 'https://youtube.com/shorts/…' : 'https://www.facebook.com/…';
+  $('pp2-msg').textContent = '';
+  $('pp2-next').hidden = true;
+  $('pp2-done').hidden = false;
+  if (!$('postpanel').open) $('postpanel').showModal();
+}
+$('pp2-x').addEventListener('click', () => $('postpanel').close());
+$('pp2-dl').addEventListener('click', () => ppMark('dl'));
+$('pp2-open').addEventListener('click', () => ppMark('up'));
+// ข้อความโพสต์ตามช่องทาง: Facebook = แคปชัน + แฮชแท็ก · YouTube = คำอธิบาย (+ บอกว่าลิงก์อยู่หน้าช่อง) + #Shorts
+function ppText(c) {
+  const cap = (c.caption || '').trim(), tags = (c.hashtags || '').trim();
+  if (!ppCh || ppCh.kind !== 'yt') return [cap, tags].filter(Boolean).join('\n\n');
+  const link = c.kind === 'product' ? 'ลิงก์สินค้าอยู่ที่หน้าช่อง (ลิงก์แอฟฟิลิเอต)' : '';
+  return [cap, link, [tags, /#shorts/i.test(tags) ? '' : '#Shorts'].filter(Boolean).join(' ')].filter(Boolean).join('\n\n');
+}
+function ytTitle(c) {
+  const t = `${(c.title || '').trim()} #Shorts`;
+  return t.length <= 100 ? t : `${t.slice(0, 92).trim()}… #Shorts`;
+}
+$('pp2-ytt').addEventListener('click', async () => { if (await copyText(ytTitle(ppClip))) { ppMark('yttitle'); toast('คัดลอกชื่อคลิปแล้ว'); } else toast('คัดลอกไม่ได้', true); });
+$('pp2-cap').addEventListener('click', async () => {
+  const t = ppText(ppClip);
+  if (!t) return toast('ยังไม่มีแคปชัน', true);
+  if (await copyText(t)) { ppMark('cap'); toast('คัดลอกแคปชันแล้ว'); } else toast('คัดลอกไม่ได้', true);
+});
+$('pp2-cmt').addEventListener('click', async () => {
+  if (!ppClip.fb_comment) return toast('ยังไม่มีคอมเมนต์', true);
+  if (await copyText(ppClip.fb_comment)) { ppMark('cmt'); toast('คัดลอกคอมเมนต์แล้ว'); } else toast('คัดลอกไม่ได้', true);
+});
+$('pp2-done').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  ppClip = await api('POST', `/api/clips/${ppClip.id}/posted`, { fb_url: $('pp2-url').value.trim(), channel_id: ppCh ? ppCh.id : undefined });
+  ppMark('url');
+  // ถัดไป: ช่องทางอื่นที่คลิปนี้ยังไม่ได้ลง (ตรงชนิดคลิป) → ไม่มีแล้วค่อยคลิปพร้อมโพสต์ถัดไป
+  const otherCh = channels.find((x) => x.active && chFits(x, ppClip) && !postedOn(ppClip, x.id));
+  const left = await api('GET', '/api/clips?status=ready&sort=old&limit=1');
+  $('pp2-msg').textContent = `บันทึกว่าโพสต์ลง ${ppCh ? ppCh.name : 'เพจ'} แล้ว ✓`;
+  $('pp2-done').hidden = true;
+  if (otherCh) { $('pp2-next').hidden = false; $('pp2-next').textContent = `ต่อ: โพสต์ลง ${otherCh.name} →`; $('pp2-next').dataset.id = String(ppClip.id); $('pp2-next').dataset.ch = String(otherCh.id); }
+  else { $('pp2-next').hidden = !left.total; $('pp2-next').textContent = `คลิปถัดไป (${left.total}) →`; $('pp2-next').dataset.id = left.items[0] ? String(left.items[0].id) : ''; $('pp2-next').dataset.ch = ''; }
+  await refresh();
+}, (err) => { $('pp2-msg').textContent = err.message; }));
+$('pp2-next').addEventListener('click', (e) => guard(e.currentTarget, () => openPostPanel(Number($('pp2-next').dataset.id), Number($('pp2-next').dataset.ch) || null)));
 
 // ขยายคลิปเร็ว → โปรเจกต์เรื่องหลายช็อต: สร้างโปรเจกต์ใหม่ตั้งต้นจากคลิป แล้วเปิดหน้าโปรเจกต์เรื่อง
 async function expandToStory(id) {
@@ -694,17 +884,22 @@ function updateCard(entry, c) {
   refs.title.textContent = c.title;
   if (document.activeElement !== refs.titleIn) refs.titleIn.value = c.title;
   if (document.activeElement !== refs.badgeIn) refs.badgeIn.value = c.badge || '';
-  refs.badge.textContent = STATUS_TH[c.status] || c.status;
-  refs.badge.className = `badge ${c.status}`;
+  const st = stageOf(c);
+  refs.badge.textContent = st.label;
+  refs.badge.className = `badge ${st.cls}`;
   refs.err.textContent = c.error || '';
   // ที่มาของข่าว: ลิงก์ในข้อความกดได้ (สร้างด้วย DOM ไม่ใช้ innerHTML กัน XSS)
+  // ที่มา: แสดงชื่อเว็บสั้น ๆ (สูงสุด 2 + จำนวนที่เหลือ) ลิงก์เต็มอยู่ใน title
   refs.source.replaceChildren();
   if (c.source) {
+    const links = c.source.match(/https?:\/\/\S+/g) || [];
     refs.source.append('ที่มา: ');
-    for (const part of c.source.split(/(https?:\/\/\S+)/)) {
-      if (/^https?:\/\//.test(part)) refs.source.append(h('a', { href: part, target: '_blank', rel: 'noopener noreferrer', textContent: part }));
-      else if (part) refs.source.append(part);
-    }
+    if (!links.length) refs.source.append(c.source);
+    links.slice(0, 2).forEach((u, i) => {
+      if (i) refs.source.append(', ');
+      refs.source.append(h('a', { href: u, target: '_blank', rel: 'noopener noreferrer', title: u, textContent: hostOf(u).replace(/^www\./, '') }));
+    });
+    if (links.length > 2) refs.source.append(h('span', { title: links.slice(2).join('\n'), textContent: ` +${links.length - 2}` }));
   }
   refs.source.hidden = !c.source;
   refs.meta.textContent = [
@@ -720,10 +915,13 @@ function updateCard(entry, c) {
   if (document.activeElement !== refs.len) refs.len.value = c.target_sec || '';
   if (document.activeElement !== refs.voice) refs.voice.checked = !!c.voice;
   refs.voice.disabled = !status.tts && !c.voice;
+  if (document.activeElement !== refs.tone) refs.tone.value = [...refs.tone.options].some((o) => o.value === c.narr_tone) ? c.narr_tone : 'plain';
   if (document.activeElement !== refs.music) refs.music.value = [...refs.music.options].some((o) => o.value === c.music) ? c.music : 'none';
 
   // หน้าปก: เปลี่ยนรูปเฉพาะเมื่อไฟล์คลิปเปลี่ยน
-  const want = busy ? null : (c.video_file || null);
+  const isPhoto = c.kind === 'photo';
+  entry.photo = isPhoto;
+  const want = busy ? null : (isPhoto ? c.photo_file || null : c.video_file || null);
   entry.videoFile = want;
   const key = want ? `${c.id}:${want}` : '';
   if (entry.thumbKey !== key) {
@@ -736,22 +934,40 @@ function updateCard(entry, c) {
       refs.img.hidden = true;
       refs.img.removeAttribute('src');
       refs.ph.hidden = false;
-      refs.ph.textContent = busy ? 'กำลังเรนเดอร์…' : 'ยังไม่มีคลิป';
+      refs.ph.textContent = busy ? 'กำลังเรนเดอร์…' : isPhoto ? 'ยังไม่มีรูป' : 'ยังไม่มีคลิป';
     }
   }
   refs.thumb.disabled = !want;
-  refs.play.hidden = !want;
+  refs.play.hidden = !want || isPhoto;
   refs.dur.hidden = !want || !c.duration;
   refs.dur.textContent = c.duration ? `${Math.round(c.duration)}″` : '';
 
   refs.btnRender.disabled = busy;
-  refs.btnRenderNow.hidden = !!c.video_file || busy;
+  const isProd = c.kind === 'product';
+  entry.fbComment = c.fb_comment || '';
+  refs.btnRenderNow.hidden = (isPhoto ? !!c.photo_file : !!c.video_file) || busy || (isProd && !c.raw_video);
+  refs.btnRenderNow.textContent = isPhoto ? '🖼 ทำรูปโพสต์' : isProd ? '🎞 ใส่ข้อความ + ทำคลิปเสร็จ' : '🎞 เรนเดอร์คลิป';
+  refs.btnRender.textContent = isPhoto ? '🖼 ทำรูปใหม่' : '🎞 เรนเดอร์ใหม่';
+  refs.btnRaw.hidden = !isProd || busy;
+  refs.btnRaw.textContent = c.raw_video ? '📎 เปลี่ยนวิดีโอ Meta AI' : '📎 แนบวิดีโอ Meta AI';
+  refs.btnCopyCmt.hidden = !(isProd || (isPhoto && c.fb_comment));
+  refs.btnPPost.hidden = !isProd;
+  refs.btnExpand.hidden = isProd || isPhoto;
+  refs.btnProducts.hidden = isProd || isPhoto; // คลิปสินค้าผูกสินค้าไว้แล้ว
+  if (isPhoto) { refs.btnRaw.hidden = true; refs.btnPPost.hidden = true; refs.btnPrompts.hidden = true; refs.btnImg.hidden = true; }
+  refs.hint.hidden = !(isProd && !c.raw_video && !c.video_file && !busy);
+  refs.hint.textContent = 'ขั้นต่อไป: เปิด meta.ai → แผง Arn Reels (🛍 คลิปสินค้า) วาง prompt + แนบรูปให้ → คุณกดสร้างเอง → “ส่งเข้า Arn Reels” (หรือแนบวิดีโอเอง)';
   refs.btnCaption.disabled = busy;
   refs.btnDel.disabled = busy;
-  refs.btnPosted.disabled = !c.video_file || busy;
+  refs.btnPosted.disabled = !(isPhoto ? c.photo_file : c.video_file) || busy;
   refs.btnPosted.dataset.posted = c.status === 'posted' ? '1' : '';
   refs.btnPosted.textContent = c.status === 'posted' ? '↩ ยังไม่ได้โพสต์' : '✅ โพสต์แล้ว';
-  if (c.video_file && !busy) {
+  if (isPhoto && c.photo_file && !busy) {
+    refs.download.hidden = false;
+    refs.download.href = `/photo/${c.photo_file}`;
+    refs.download.download = `post-${c.id}.jpg`;
+    refs.download.textContent = '⬇ ดาวน์โหลดรูป';
+  } else if (c.video_file && !busy) {
     refs.download.hidden = false;
     refs.download.href = `/media/${c.id}.mp4`;
     refs.download.download = `reel-${c.id}${c.video_file.endsWith('.webm') ? '.webm' : '.mp4'}`;
@@ -759,7 +975,55 @@ function updateCard(entry, c) {
   } else {
     refs.download.hidden = true;
   }
+  // ช่องทางที่ลงแล้ว (✓) / ยังไม่ลง (○) — แสดงเมื่อคลิปมีวิดีโอแล้ว
+  const fit = channels.filter((x) => x.active && chFits(x, c));
+  refs.chans.hidden = !(isPhoto ? c.photo_file : c.video_file) || !fit.length;
+  refs.chans.replaceChildren(...fit.map((x) => h('span', { class: `ch-chip${postedOn(c, x.id) ? ' on' : ''}`, title: postedOn(c, x.id) ? 'โพสต์แล้ว' : 'ยังไม่ได้โพสต์' }, `${postedOn(c, x.id) ? '✓' : '○'} ${x.kind === 'yt' ? 'YouTube' : 'FB'} ${x.name}`)));
+  if (st.key === 'posted') {
+    const n = fit.filter((x) => postedOn(c, x.id)).length;
+    if (fit.length > 1) refs.badge.textContent = `โพสต์แล้ว ${n}/${fit.length}`;
+  }
+  refs.fbLink.hidden = !c.fb_url;
+  if (c.fb_url) refs.fbLink.href = c.fb_url;
+  arrangeActions(entry, c, st);
   entry.stamp = c.updated_at;
+}
+
+// ขั้นของคลิป (ใช้ทั้งป้ายบนการ์ด ตัวกรอง และหน้าวันนี้) — คลิปสินค้าแยก "รอวิดีโอ Meta AI" กับ "รอใส่ข้อความ" ออกจาก "ร่าง"
+function stageOf(c) {
+  if (c.status === 'rendering') return { key: 'rendering', label: 'กำลังทำคลิป…', cls: 'rendering' };
+  if (c.status === 'failed') return { key: 'failed', label: 'ล้มเหลว', cls: 'failed' };
+  if (c.status === 'posted') return { key: 'posted', label: 'โพสต์แล้ว', cls: 'posted' };
+  if (c.kind === 'photo') return c.photo_file ? { key: 'ready', label: 'โพสต์รูป · พร้อมโพสต์', cls: 'ready' } : { key: 'draft', label: 'โพสต์รูป · รอทำรูป', cls: 'draft' };
+  if (c.video_file) return { key: 'ready', label: 'พร้อมโพสต์', cls: 'ready' };
+  if (c.kind === 'product') return c.raw_video ? { key: 'text', label: 'รอใส่ข้อความ', cls: 'text' } : { key: 'wait', label: 'รอวิดีโอ Meta AI', cls: 'wait' };
+  return { key: 'draft', label: 'ร่าง', cls: 'draft' };
+}
+
+// ปุ่มหลัก 1 ปุ่ม (สีม่วง) + ปุ่มรอง 1 ปุ่มตามขั้น ที่เหลือเข้าเมนู ⋯
+function arrangeActions(entry, c, st) {
+  const r = entry.refs;
+  const isProd = c.kind === 'product';
+  let primary = null, secondary = null;
+  if (st.key === 'wait') { primary = r.btnMeta; secondary = r.btnRaw; }
+  else if (st.key === 'text') { primary = r.btnRenderNow; secondary = r.btnRaw; }
+  else if (st.key === 'draft' || (st.key === 'failed' && !c.video_file)) { primary = r.btnRenderNow; secondary = null; }
+  else if (st.key === 'ready' || (st.key === 'failed' && c.video_file)) { primary = r.btnPost; secondary = r.download; }
+  else if (st.key === 'posted') {
+    const missing = channels.filter((x) => x.active && chFits(x, c) && !postedOn(c, x.id)).length;
+    if (missing) { primary = r.btnPost; r.btnPost.textContent = `📤 โพสต์ช่องทางที่เหลือ (${missing})`; secondary = c.fb_url ? r.fbLink : r.download; }
+    else { primary = c.fb_url ? r.fbLink : null; secondary = r.download; }
+  }
+  if (st.key !== 'posted') r.btnPost.textContent = '📤 โพสต์';
+  for (const b of [r.btnRenderNow, r.btnRaw, r.btnMeta, r.btnPost, r.download, r.fbLink, r.btnCopyAll]) b.classList.remove('primary');
+  if (primary) { primary.classList.add('primary'); primary.hidden = false; }
+  r.main.replaceChildren(...[primary, secondary].filter(Boolean));
+  // เมนู ⋯ : ทุกอย่างที่ไม่ได้อยู่บนแถวหลัก (ปุ่มที่ hidden ด้วยเงื่อนไขเดิมจะไม่แสดง)
+  const menu = [r.btnCopyAll, r.btnCopyCap, r.btnCopyTags, r.btnCopyCmt, r.btnPPost, r.download, r.btnRaw, r.btnPrompts, r.btnImg, r.btnExpand, r.btnProducts, r.btnPosted, r.btnDel]
+    .filter((b) => b !== primary && b !== secondary);
+  r.menuList.replaceChildren(...menu);
+  r.btnRenderNow.textContent = c.kind === 'photo' ? '🖼 ทำรูปโพสต์' : isProd ? '🎞 ใส่ข้อความ + ทำคลิปเสร็จ' : (st.key === 'failed' ? '↻ เรนเดอร์ใหม่' : '🎞 เรนเดอร์คลิป');
+  if (st.key === 'failed' && !c.video_file) r.btnRenderNow.hidden = false;
 }
 
 // ---------- รายการ / ตัวกรอง ----------
@@ -798,6 +1062,8 @@ async function refresh() {
   $('more').hidden = items.length >= total;
   $('more').textContent = `โหลดเพิ่ม (แสดง ${items.length} จาก ${total})`;
   schedulePoll(items.some((c) => c.status === 'rendering'));
+  $('tab-count').textContent = stats.all ? fmtNum(stats.all) : '';
+  if (view === 'today') renderToday().catch(() => {});
 }
 
 let pollTimer = null;
@@ -858,13 +1124,18 @@ function chip(ok, text) {
 async function loadStatus() {
   status = await api('GET', '/api/status');
   const mime = ReelRender.pickMime();
-  $('chips').replaceChildren(
-    chip(!!mime, mime ? `เรนเดอร์ (${mime.split(';')[0].replace('video/', '')})` : 'เรนเดอร์ไม่ได้'),
-    chip(status.ai, status.ai ? `AI พร้อม (${status.aiProvider === 'cli' ? 'Claude Code' : 'API'})` : (status.aiProvider === 'cli' ? 'ยังไม่ล็อกอิน Claude Code' : 'ยังไม่มีคีย์ AI')),
-    chip(status.tts, status.tts ? `พากย์ (${{ google: 'Google', gemini: 'Gemini' }[status.ttsProvider] || 'Windows'})` : 'พากย์ไม่พร้อม'),
-  );
+  const chipList = [
+    [!!mime, mime ? `เรนเดอร์ (${mime.split(';')[0].replace('video/', '')})` : 'เรนเดอร์ไม่ได้'],
+    [!!status.ai, status.ai ? `AI พร้อม (${status.aiProvider === 'cli' ? 'Claude Code' : 'API'})` : (status.aiProvider === 'cli' ? 'ยังไม่ล็อกอิน Claude Code' : 'ยังไม่มีคีย์ AI')],
+    [!!status.tts, status.tts ? `พากย์ (${{ google: 'Google', gemini: 'Gemini' }[status.ttsProvider] || 'Windows'})` : 'พากย์ไม่พร้อม'],
+  ];
+  const bad = chipList.filter(([ok]) => !ok);
+  const one = bad.length ? bad.map(([ok, t]) => chip(ok, t)) : [chip(true, 'ระบบพร้อม')];
+  if (!bad.length) one[0].title = chipList.map(([, t]) => t).join(' · ');
+  $('chips').replaceChildren(...one);
   buildThemes();
   fillMusic($('f-music'), $('f-music').value || 'mystic');
+  fillTone($('f-tone'), $('f-tone').value || 'plain');
   $('f-voice').disabled = !status.tts;
   if (!status.tts) $('f-voice').checked = false;
   $('voice-note').textContent = status.tts
@@ -1005,7 +1276,7 @@ function formData() {
   return {
     images: imSel.map(({ file, credit, src }) => ({ file, credit, src })), badge: $('f-badge').value,
     title: $('f-title').value, brief: $('f-brief').value, script: $('f-script').value, theme,
-    voice: $('f-voice').checked, music: $('f-music').value, target_sec: targetSec(),
+    voice: $('f-voice').checked, narr_tone: $('f-tone').value, music: $('f-music').value, target_sec: targetSec(),
     caption: $('f-caption').value, hashtags: $('f-tags').value, source: $('f-source').value,
   };
 }
@@ -1128,11 +1399,14 @@ const fmtNum = (n) => Number(n).toLocaleString('en-US');
 // คลังอาจมีหลายพันรายการ: โหลดทีละ 50 (ปุ่ม "โหลดเพิ่ม") ค้นหา/เรียงที่เซิร์ฟเวอร์
 const PD_PAGE = 50;
 let pdLimit = PD_PAGE;
+let pdTotal = 0;
 
 async function loadProducts() {
   const q = $('pd-q').value.trim();
-  const { items, total } = await api('GET', `/api/products?sort=${$('pd-sort').value}&limit=${pdLimit}${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+  const shop = $('pd-shop').value;
+  const { items, total } = await api('GET', `/api/products?sort=${$('pd-sort').value}&limit=${pdLimit}${q ? `&q=${encodeURIComponent(q)}` : ''}${shop ? `&shop=${encodeURIComponent(shop)}` : ''}`);
   $('pd-list').replaceChildren(...items.map(productItem));
+  pdTotal = total;
   $('pd-empty').hidden = total > 0;
   $('pd-count').textContent = total ? `แสดง ${items.length} จาก ${fmtNum(total)} รายการ` : '';
   $('pd-more').hidden = items.length >= total;
@@ -1149,6 +1423,9 @@ function productItem(p) {
     tags: h('input', { value: p.tags, maxLength: 200, placeholder: 'แท็ก' }),
     note: h('input', { value: p.note, maxLength: 300, placeholder: 'โน้ต' }),
     sales: h('input', { value: p.sales || '', type: 'number', min: 0, step: 1, placeholder: 'ยอดขาย' }),
+    brand: h('input', { value: p.brand || '', maxLength: 80, placeholder: 'แบรนด์ (คลิปสินค้า)' }),
+    clip_name: h('input', { value: p.clip_name || '', maxLength: 60, placeholder: 'ชื่อในคลิป สั้น ๆ เช่น ครีมกันแดดสูตรเย็น' }),
+    say: h('input', { value: p.say || '', maxLength: 120, placeholder: 'คำอ่าน (ถ้าอ่านยาก) เช่น ลา-โรช-โพเซย์' }),
   };
   const copy = h('button', { class: 'btn sm', type: 'button', textContent: '📋 คัดลอกลิงก์' });
   copy.addEventListener('click', async () => {
@@ -1167,27 +1444,221 @@ function productItem(p) {
   view.append(
     h('div', { class: 'nm', textContent: p.name }),
     ...(p.tags ? [h('div', { class: 'tg', textContent: p.tags })] : []),
+    ...(p.shop ? [h('button', { class: 'linkbtn pd-shop', type: 'button', textContent: `🏪 ${p.shop}`, title: 'ดูเฉพาะสินค้าร้านนี้', onclick: () => pdPickShop(p.shop) })] : []),
     ...(p.note ? [h('div', { class: 'nt', textContent: p.note })] : []),
     h('div', { class: 'lk', textContent: `${hostOf(p.url)}${p.sales ? ` · ยอดขาย ${fmtNum(p.sales)}` : ''}` }),
     h('div', { class: 'row' }, copy, editBtn, delBtn));
   const save = h('button', { class: 'btn sm primary', type: 'button', textContent: 'บันทึก' });
   save.addEventListener('click', () => guard(save, async () => {
-    await api('PATCH', `/api/products/${p.id}`, { name: f.name.value, url: f.url.value, tags: f.tags.value, note: f.note.value, sales: f.sales.value });
+    await api('PATCH', `/api/products/${p.id}`, { name: f.name.value, url: f.url.value, tags: f.tags.value, note: f.note.value, sales: f.sales.value, brand: f.brand.value, clip_name: f.clip_name.value, say: f.say.value });
     await loadProducts();
   }, (e) => { $('pd-msg').textContent = e.message; }));
   const cancel = h('button', { class: 'btn sm ghost', type: 'button', textContent: 'ยกเลิก' });
   cancel.addEventListener('click', () => { edit.hidden = true; view.hidden = false; li.classList.remove('editing'); });
-  edit.append(f.name, f.url, f.tags, f.note, f.sales, h('div', { class: 'row' }, save, cancel));
-  li.append(view, edit);
+  edit.append(f.name, f.url, f.tags, f.note, f.sales, f.brand, f.clip_name, f.say, h('div', { class: 'row' }, save, cancel));
+  // คลิปสินค้า: ติ๊กเลือก + รูปสินค้าจริง (กดเพื่ออัปโหลด/เปลี่ยน) + ข้อมูลที่จะเติมลง prompt
+  const pick = h('input', { type: 'checkbox', class: 'pc-pick', checked: pcSel.has(p.id), title: 'เลือกทำคลิปสินค้า' });
+  pick.dataset.id = String(p.id);
+  pick.addEventListener('change', () => { if (pick.checked) pcSel.add(p.id); else pcSel.delete(p.id); pcUpdateSel(); });
+  const imgBtn = h('button', { class: 'pc-img', type: 'button', title: p.image ? 'เปลี่ยนรูปสินค้า' : 'อัปโหลดรูปสินค้าจริง (ใช้แนบให้ Meta AI)' });
+  if (p.image) imgBtn.append(h('img', { src: `/clip-images/${p.image}`, alt: '' })); else imgBtn.textContent = '📷 รูปสินค้า';
+  imgBtn.addEventListener('click', () => guard(imgBtn, async () => {
+    const file = await pickImageFile();
+    if (!file) return;
+    const up = await uploadImageFile(file);
+    await api('PATCH', `/api/products/${p.id}`, { image: up.file });
+    await loadProducts();
+  }, (e) => { $('pd-msg').textContent = e.message; }));
+  const promptBtn = h('button', { class: 'btn sm ghost', type: 'button', textContent: '📋 prompt Meta AI', title: 'คัดลอก prompt ของสินค้านี้ (เติมข้อมูลแล้ว)' });
+  promptBtn.addEventListener('click', () => guard(promptBtn, async () => {
+    const r = await api('GET', `/api/product-clips/preview/${p.id}`);
+    if (!(await copyText(r.prompt))) throw new Error('คัดลอกไม่ได้');
+    toast(`คัดลอก prompt แล้ว (ชื่อในคลิป: ${r.clip_name})`);
+  }, (e) => { $('pd-msg').textContent = e.message; }));
+  view.querySelector('.row').append(promptBtn);
+  if (p.brand || p.clip_name || p.say) view.insertBefore(h('div', { class: 'pc-meta', textContent: [p.brand && `แบรนด์: ${p.brand}`, p.clip_name && `ชื่อในคลิป: ${p.clip_name}`, p.say && `คำอ่าน: ${p.say}`].filter(Boolean).join(' · ') }), view.querySelector('.row'));
+  li.classList.add('pc-has');
+  li.append(pick, imgBtn, h('div', {}, view, edit));
   return li;
 }
 
-$('pd-x').addEventListener('click', () => $('products').close());
-$('pd-close').addEventListener('click', () => $('products').close());
+// เปิดแท็บสินค้า (เรียกจาก setView)
+const openProducts = () => guard($('b-products'), async () => {
+  $('pd-msg').textContent = ''; $('pc-msg').textContent = '';
+  pdLimit = PD_PAGE;
+  pfRecent();
+  pfGo(pfStep);
+  await Promise.all([loadProducts(), pcLoad(), loadShops()]);
+  if (!pdTotal) pfGo(1);
+}, (err) => { $('pd-msg').textContent = err.message; });
+
+// ---- 3 ขั้น: ① หาสินค้า ② เลือกสินค้า ③ ทำคลิป ----
+const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ไม่มีที่เก็บ ก็ไม่เป็นไร */ } };
+let pfStep = Number(lsGet('pfStep', '1')) || 1;
+function pfGo(n) {
+  pfStep = Math.min(3, Math.max(1, n));
+  lsSet('pfStep', String(pfStep));
+  for (const b of document.querySelectorAll('#products .pf-step')) {
+    const k = Number(b.dataset.step);
+    b.setAttribute('aria-selected', String(k === pfStep));
+    b.classList.toggle('done', k < pfStep);
+  }
+  for (const pane of document.querySelectorAll('#products .pf-pane')) pane.hidden = Number(pane.dataset.pane) !== pfStep;
+  $('pf-back').hidden = pfStep === 1;
+  $('pf-next').hidden = pfStep === 3;
+  $('pf-next').textContent = pfStep === 1 ? 'มีสินค้าในคลังแล้ว → ไปเลือก' : (pcSel.size ? `ไปทำคลิป (${fmtNum(pcSel.size)} ชิ้น) →` : 'ไปทำคลิป →');
+  $('pf-next').disabled = pfStep === 2 && !pcSel.size;
+  window.scrollTo({ top: 0 });
+}
+for (const b of document.querySelectorAll('#products .pf-step')) b.addEventListener('click', () => pfGo(Number(b.dataset.step)));
+for (const b of document.querySelectorAll('#products [data-goto]')) b.addEventListener('click', () => pfGo(Number(b.dataset.goto)));
+$('pf-back').addEventListener('click', () => pfGo(pfStep - 1));
+$('pf-next').addEventListener('click', () => pfGo(pfStep + 1));
+$('pd-reload').addEventListener('click', (e) => guard(e.currentTarget, loadProducts, (err) => { $('pd-msg').textContent = err.message; }));
+
+// คีย์เวิร์ด → เปิดเว็บ Shopee Affiliate (หน้า ข้อเสนอผลิตภัณฑ์) พร้อมส่งคีย์เวิร์ดให้แผงของส่วนเสริมทาง #arn_kw=…
+const SHOPEE_OFFER = 'https://affiliate.shopee.co.th/offer/product_offer';
+const pfRecentList = () => { try { return JSON.parse(lsGet('pfRecent', '[]')).filter((x) => typeof x === 'string').slice(0, 6); } catch { return []; } };
+function pfRecent() {
+  const list = pfRecentList();
+  if (!$('pf-kw').value) $('pf-kw').value = list[0] || 'ของใช้ในบ้าน';
+  $('pf-recent').replaceChildren(...list.map((k) => {
+    const c = h('button', { type: 'button', class: 'pf-chip', textContent: k });
+    c.addEventListener('click', () => { $('pf-kw').value = k; $('pf-kw').focus(); });
+    return c;
+  }));
+}
+let pfWaitFrom = null; // จำนวนในคลังตอนออกไปหาที่ Shopee — กลับมาแล้วเพิ่มขึ้น = พาไปขั้น 2
+let pfBy = lsGet('pfBy', 'kw') === 'shop' ? 'shop' : 'kw';
+function pfSetBy(by) {
+  pfBy = by; lsSet('pfBy', by);
+  for (const b of document.querySelectorAll('.pf-by [data-by]')) b.setAttribute('aria-pressed', String(b.dataset.by === by));
+  $('pf-kw-l').textContent = by === 'shop' ? 'พิมพ์ชื่อร้านค้าที่จะให้หาใน Shopee' : 'พิมพ์คีย์เวิร์ดที่จะให้หาใน Shopee';
+  $('pf-kw').placeholder = by === 'shop' ? 'เช่น GUCUT, Xiaomi, Lock&Lock' : 'เช่น ของใช้ในบ้าน, ครีมกันแดด, กระเป๋า';
+  $('pf-shop-note').hidden = by !== 'shop';
+  $('pf-go').textContent = by === 'shop' ? '🏪 หาร้านใน Shopee' : '🔎 หาใน Shopee';
+}
+for (const b of document.querySelectorAll('.pf-by [data-by]')) b.addEventListener('click', () => { pfSetBy(b.dataset.by); $('pf-kw').value = ''; $('pf-kw').focus(); });
+pfSetBy(pfBy);
+const SHOPEE_SHOPS = 'https://affiliate.shopee.co.th/offer/brand_offer';
+$('pf-go').addEventListener('click', async () => {
+  const kw = $('pf-kw').value.trim();
+  if (pfBy === 'shop') {
+    if (!kw) { $('pf-kw').focus(); $('pd-msg').textContent = 'พิมพ์ชื่อร้านก่อน เช่น GUCUT'; return; }
+    copyText(kw).catch(() => {});
+    window.open(`${SHOPEE_SHOPS}#arn_kw=${encodeURIComponent(kw)}&arn_shop=1&arn_n=${$('pf-n').value}`, '_blank', 'noopener');
+    pfWaitFrom = pdTotal;
+    $('pd-msg').textContent = `เปิดข้อเสนอร้านค้าแล้ว — แผง Arn Reels หาร้าน “${kw}” และดึงสินค้าให้ ติ๊กแล้วกด “เพิ่มเข้า Arn Reels” แล้วกลับมาหน้านี้`;
+    return;
+  }
+  if (!kw) { $('pf-kw').focus(); $('pd-msg').textContent = 'พิมพ์คีย์เวิร์ดก่อน เช่น ของใช้ในบ้าน'; return; }
+  lsSet('pfRecent', JSON.stringify([kw, ...pfRecentList().filter((x) => x !== kw)].slice(0, 6)));
+  pfRecent();
+  copyText(kw).catch(() => {}); // สำรอง: ถ้าแผงไม่ได้รับคีย์เวิร์ด วางเองได้ด้วย Ctrl+V
+  window.open(`${SHOPEE_OFFER}#arn_kw=${encodeURIComponent(kw)}&arn_n=${$('pf-n').value}`, '_blank', 'noopener');
+  pfWaitFrom = pdTotal;
+  $('pd-msg').textContent = `เปิด Shopee Affiliate แล้ว — ค้น “${kw}” ในแผง Arn Reels มุมขวาล่าง (คัดลอกคีย์เวิร์ดไว้ให้ด้วย) เพิ่มเสร็จแล้วกลับมาหน้านี้`;
+});
+$('pf-kw').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('pf-go').click(); } });
+window.addEventListener('focus', () => {
+  if (view !== 'products' || pfWaitFrom === null) return;
+  loadProducts().then(() => {
+    if (pdTotal > pfWaitFrom) {
+      $('pd-msg').textContent = `มีสินค้าใหม่เข้าคลัง ${fmtNum(pdTotal - pfWaitFrom)} ชิ้น — ติ๊กเลือกแล้วไปทำคลิปได้เลย`;
+      pfWaitFrom = null;
+      pdLimit = PD_PAGE;
+      $('pd-sort').value = 'new';
+      loadShops().then(loadProducts).then(() => pfGo(2)).catch(() => {});
+    }
+  }).catch(() => {});
+});
+
 let pdTimer = null;
 $('pd-q').addEventListener('input', () => { clearTimeout(pdTimer); pdTimer = setTimeout(() => { pdLimit = PD_PAGE; loadProducts().catch((e) => { $('pd-msg').textContent = e.message; }); }, 250); });
 $('pd-sort').addEventListener('change', () => { pdLimit = PD_PAGE; loadProducts(); });
+// เลือกสินค้าจากร้านค้า: ตัวเลือกร้าน (ร้านที่มีในคลัง + จำนวน)
+async function loadShops() {
+  const shops = await api('GET', '/api/products/shops');
+  const cur = $('pd-shop').value;
+  $('pd-shop').replaceChildren(h('option', { value: '', textContent: `🏪 ทุกร้าน${shops.length ? ` (${shops.length} ร้าน)` : ''}` }), ...shops.map((x) => h('option', { value: x.shop, textContent: `${x.shop} (${fmtNum(x.n)})` })));
+  $('pd-shop').value = shops.some((x) => x.shop === cur) ? cur : '';
+  return shops;
+}
+function pdPickShop(name) {
+  if (![...$('pd-shop').options].some((o) => o.value === name)) $('pd-shop').append(h('option', { value: name, textContent: name }));
+  $('pd-shop').value = name; pdLimit = PD_PAGE; loadProducts();
+}
+$('pd-shop').addEventListener('change', () => { pdLimit = PD_PAGE; loadProducts(); });
 $('pd-more').addEventListener('click', (e) => guard(e.currentTarget, async () => { pdLimit += PD_PAGE; await loadProducts(); }));
+
+// ---- คลิปสินค้า (Meta AI) ----
+const pcSel = new Set(); // id สินค้าที่ติ๊กไว้ (คงอยู่ข้ามการค้นหา/โหลดเพิ่ม)
+function pcUpdateSel() {
+  $('pc-sel').textContent = pcSel.size ? `เลือก ${fmtNum(pcSel.size)} สินค้า` : 'ยังไม่ได้เลือกสินค้า';
+  $('pc-sel3').textContent = pcSel.size ? `เลือกไว้ ${fmtNum(pcSel.size)} สินค้า` : 'ยังไม่ได้เลือกสินค้า — กลับไปขั้น 2';
+  $('pf-sel-badge').textContent = pcSel.size ? `(${fmtNum(pcSel.size)})` : '';
+  if (typeof view !== 'undefined' && view === 'products') { $('pf-next').disabled = pfStep === 2 && !pcSel.size; if (pfStep === 2) $('pf-next').textContent = pcSel.size ? `ไปทำคลิป (${fmtNum(pcSel.size)} ชิ้น) →` : 'ไปทำคลิป →'; }
+  $('pc-go').disabled = !pcSel.size;
+  $('pc-go').textContent = pcSel.size ? `🎬 สร้างคลิปสินค้า (${fmtNum(pcSel.size)})` : '🎬 สร้างคลิปสินค้า';
+}
+function pickImageFile() {
+  return new Promise((resolve) => {
+    const inp = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+    inp.addEventListener('change', () => resolve(inp.files[0] || null));
+    inp.click();
+  });
+}
+async function uploadImageFile(file) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('รองรับเฉพาะรูป png/jpg/webp');
+  const res = await fetch('/api/images/upload', { method: 'PUT', headers: { 'content-type': file.type }, body: file });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+let pcCfg = null;
+async function pcLoad() {
+  pcCfg = await api('GET', '/api/product-clips/settings');
+  $('pc-overlay').checked = !!pcCfg.overlay;
+  if (document.activeElement !== $('pc-tpl')) $('pc-tpl').value = pcCfg.template;
+  $('pc-typo-img').hidden = !pcCfg.typoRef; $('pc-typo-del').hidden = !pcCfg.typoRef;
+  if (pcCfg.typoRef) $('pc-typo-img').src = `/clip-images/${pcCfg.typoRef}`;
+  const q = pcCfg.queue;
+  $('pc-queue').textContent = q.waiting ? `(รอ ${fmtNum(q.waiting)})` : '';
+  $('pc-queue').title = q.total ? `รอทำบน meta.ai ${fmtNum(q.waiting)} · ได้วิดีโอแล้ว ${fmtNum(q.done)}` : '';
+  if (!$('pc-music').options.length) fillMusic($('pc-music'), 'none');
+  pcUpdateSel();
+}
+$('pc-all').addEventListener('click', () => { for (const c of $('pd-list').querySelectorAll('.pc-pick')) { c.checked = true; pcSel.add(Number(c.dataset.id)); } pcUpdateSel(); });
+$('pc-none').addEventListener('click', () => { pcSel.clear(); for (const c of $('pd-list').querySelectorAll('.pc-pick')) c.checked = false; pcUpdateSel(); });
+$('pc-go').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  const r = await api('POST', '/api/product-clips', { product_ids: [...pcSel], music: $('pc-music').value });
+  pcSel.clear();
+  for (const c of $('pd-list').querySelectorAll('.pc-pick')) c.checked = false;
+  $('pc-msg').textContent = `สร้างคลิปสินค้า ${fmtNum(r.created)} รายการเข้าคิวแล้ว (รอทำบน meta.ai ${fmtNum(r.queue)})`
+    + (r.noImage.length ? ` · ⚠ ยังไม่มีรูปสินค้า ${r.noImage.length} ชิ้น — Meta AI จะไม่มีภาพอ้างอิง: ${r.noImage.slice(0, 3).join(', ')}${r.noImage.length > 3 ? '…' : ''}` : '');
+  await pcLoad();
+  kind = 'product'; for (const x of $('kindfilter').children) x.setAttribute('aria-pressed', String(x.dataset.k === 'product'));
+  resetPage(); await refresh();
+  toast('เข้าคิวแล้ว — เปิด meta.ai แล้วใช้แผง Arn Reels โหมด “🛍 คลิปสินค้า”');
+}, (err) => { $('pc-msg').textContent = err.message; }));
+$('pc-save').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  await api('PUT', '/api/product-clips/settings', { template: $('pc-tpl').value, overlay: $('pc-overlay').checked });
+  await pcLoad(); toast('บันทึกตั้งค่าคลิปสินค้าแล้ว');
+}, (err) => { $('pc-msg').textContent = err.message; }));
+$('pc-overlay').addEventListener('change', () => api('PUT', '/api/product-clips/settings', { overlay: $('pc-overlay').checked }).then(pcLoad).catch((err) => { $('pc-msg').textContent = err.message; }));
+$('pc-reset').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  if (!(await uiConfirm('คืนค่าเทมเพลต prompt เป็น V4.0 ตั้งต้น? (ที่แก้ไว้จะหาย)', { title: 'คืนค่าเทมเพลต', ok: 'คืนค่า' }))) return;
+  await api('PUT', '/api/product-clips/settings', { template: '' });
+  $('pc-tpl').value = ''; await pcLoad();
+}));
+$('pc-typo-up').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  const f = await pickImageFile(); if (!f) return;
+  const up = await uploadImageFile(f);
+  await api('PUT', '/api/product-clips/settings', { typoRef: up.file });
+  await pcLoad();
+}, (err) => { $('pc-msg').textContent = err.message; }));
+$('pc-typo-del').addEventListener('click', (e) => guard(e.currentTarget, async () => { await api('PUT', '/api/product-clips/settings', { typoRef: '' }); await pcLoad(); }));
 
 // ---- ดึงจากแอป Pondy บนมือถือ ----
 let ppSerial = '';
@@ -1262,7 +1733,7 @@ $('pd-form').addEventListener('submit', (e) => {
   guard($('pd-add'), async () => {
     await api('POST', '/api/products', { name: $('pd-name').value, url: $('pd-url').value, tags: $('pd-tags').value, note: $('pd-note').value, sales: $('pd-sales').value });
     $('pd-form').reset();
-    $('pd-msg').textContent = '';
+    $('pd-msg').textContent = 'เพิ่มสินค้าแล้ว ✓ — ไปขั้น 2 เพื่อเลือกทำคลิป';
     await loadProducts();
     $('pd-name').focus();
   }, (err) => { $('pd-msg').textContent = err.message; });
@@ -1419,12 +1890,13 @@ $('rc-close').addEventListener('click', () => $('recs').close());
 // 1) วางข้อความ/รูปข่าว + แหล่งที่มา → AI เรียบเรียงใหม่ (ถ้อยคำใหม่ ข้อเท็จจริงเดิม ใส่ที่มา)
 // 2) ฟีด RSS: เลือกข่าว → ดึงเนื้อบทความ → เรียบเรียง → บันทึกลงคลังเป็นร่าง รอผู้ใช้คัดลอกไปโพสต์เอง
 $('mode').addEventListener('click', (e) => {
+  if (e.target.closest('button[data-go="products"]')) { location.hash = 'products'; return; }
   const b = e.target.closest('button[data-m]');
   if (!b) return;
   // "เรื่องหลายช็อต" เป็นเวิร์กสเปซของตัวเอง (โปรเจกต์ถาวร) → เปิดหน้าโปรเจกต์เรื่อง ไม่สลับฟอร์มคลิปเร็ว
   if (b.dataset.m === 'story') { window.openStory?.(); return; }
   $('studio').dataset.mode = b.dataset.m;
-  for (const x of $('mode').children) x.setAttribute('aria-pressed', String(x === b && x.dataset.m !== 'story'));
+  for (const x of $('mode').querySelectorAll('button[data-m]')) x.setAttribute('aria-pressed', String(x === b && x.dataset.m !== 'story'));
   say('');
   if (b.dataset.m === 'news' && !feedsLoaded) loadFeeds().catch((err) => say(err.message));
 });
@@ -1449,6 +1921,26 @@ $('b-news').addEventListener('click', (e) => guard(e.currentTarget, async () => 
   showFacts(r.facts);
   say('เรียบเรียงเสร็จแล้ว — ตรวจข้อความบนจอ/แคปชัน แล้วกด “สร้างคลิป” หรือ “บันทึกร่างลงคลัง”');
 }, (err) => say(err.message)));
+
+// หัวข้อข่าว (หรือชื่อคลิปถ้าเว้นว่าง) → AI ค้นข่าวล่าสุด → ใส่เนื้อข่าว + ที่มาลงฟอร์ม แล้วผู้ใช้กด "เรียบเรียงข่าว" ต่อ
+$('b-findnews').addEventListener('click', (ev) => guard(ev.currentTarget, async () => {
+  const topic = ($('f-newsq').value.trim() || $('f-title').value.trim());
+  if (!topic) throw new Error('พิมพ์หัวข้อข่าว (หรือชื่อคลิป) ก่อน');
+  if ($('f-brief').value.trim() && !(await uiConfirm('ช่องข้อความข่าวมีข้อความอยู่แล้ว — เขียนทับด้วยข่าวที่ค้นเจอ?', { title: 'ค้นข่าว', ok: 'เขียนทับ' }))) return;
+  const note = $('nf-note');
+  note.hidden = true;
+  say('AI กำลังค้นข่าว… (อาจใช้ 1–3 นาที)');
+  const r = await api('POST', '/api/news/find', { topic });
+  if (!$('f-title').value.trim()) $('f-title').value = r.title;
+  $('f-brief').value = r.text;
+  // ที่มา: "สำนัก ลิงก์" ทีละแหล่ง เท่าที่ไม่เกิน 300 ตัวอักษร ไม่ตัดลิงก์กลางคัน
+  $('f-source').value = r.sources.reduce((s, x) => { const add = `${x.outlet ? `${x.outlet} ` : ''}${x.url}`; const n = s ? `${s} ${add}` : add; return n.length <= 300 ? n : s; }, '');
+  newsImage = ''; $('drop-preview').hidden = true;
+  for (const x of $('feed-items').children) x.classList.remove('picked');
+  note.textContent = `เจอ ${r.sources.length} แหล่ง${r.event ? ` · ${r.event}` : ''} — ตรวจกับลิงก์ก่อนโพสต์${r.caution ? ` · ⚠ ${r.caution}` : ''}`;
+  note.hidden = false;
+  say('ใส่เนื้อข่าวแล้ว — กด “📰 เรียบเรียงข่าว” ต่อได้เลย');
+}, (e) => { $('nf-note').textContent = e.message; $('nf-note').hidden = false; say(''); }));
 
 // ลิงก์ข่าวจากฟีดมักมีพารามิเตอร์ติดตาม (utm_*, at_*) — ตัดทิ้งก่อนใส่เป็นที่มา
 function cleanLink(u) {
@@ -1532,7 +2024,7 @@ function feedItem(feed, it) {
       await api('POST', '/api/clips', {
         images: imgs,
         title: r.title, brief: text.slice(0, 12000), script: r.script, caption: r.caption, hashtags: r.hashtags, source: sourceLine,
-        theme, voice: $('f-voice').checked, music: $('f-music').value, target_sec: targetSec(),
+        theme, voice: $('f-voice').checked, narr_tone: $('f-tone').value, music: $('f-music').value, target_sec: targetSec(),
       });
       task.set(tid, 1, 'บันทึกลงคลังแล้ว ✓');
       done = true;
@@ -1623,8 +2115,9 @@ $('b-create').addEventListener('click', (ev) => guard(ev.target, async () => {
   }
   clearForm(); // ความยาว/สไตล์/เสียง คงค่าเดิมไว้ให้คลิปถัดไป
   say('');
-  toast('สร้างคลิปเสร็จแล้ว ✓');
+  toast('สร้างคลิปเสร็จแล้ว ✓ — ดูได้ที่แท็บคลัง');
   await refresh();
+  if (view === 'create') location.hash = 'library';
 }, (e) => say(e.message)));
 
 // ---------- ตั้งค่า ----------
@@ -1906,4 +2399,338 @@ async function promptLoginOnce() {
   await openSettings();
 }
 
-loadStatus().then(refresh).then(promptLoginOnce).catch((e) => say(e.message));
+// ---------- แท็บบน: วันนี้ / สร้างคลิป / คลัง (จำใน #hash) ----------
+let view = 'today';
+function setView(v) {
+  view = ['today', 'products', 'create', 'library', 'schedule', 'series'].includes(v) ? v : 'today';
+  document.body.dataset.view = view;
+  for (const a of document.querySelectorAll('#tabs a[data-view]')) a.toggleAttribute('aria-current', a.dataset.view === view);
+  if (view === 'today') renderToday().catch((e) => { $('td-next-t').textContent = e.message; });
+  if (view === 'products') openProducts();
+  if (view === 'schedule') renderSchedule().catch((e) => toast(e.message, true));
+  if (view === 'series' && !$('series-frame').src) $('series-frame').src = '/series.html?embed=1';
+}
+window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
+setView(location.hash.slice(1));
+
+// ---------- หน้าวันนี้ ----------
+const tdGoal = () => Math.max(1, Number(lsGet('tdGoal', '3')) || 3);
+let tdBusy = false;
+async function renderToday() {
+  if (tdBusy) return;
+  tdBusy = true;
+  try {
+    const { items } = await api('GET', '/api/clips?sort=old&limit=500');
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const by = { wait: [], text: [], ready: [], posted: [] };
+    for (const c of items) {
+      const k = stageOf(c).key;
+      if (k === 'posted') { if (c.posted_at >= t0.getTime()) by.posted.push(c); }
+      else if (by[k]) by[k].push(c);
+    }
+    by.ready.sort((a, b) => (a.kind === 'product' ? 0 : 1) - (b.kind === 'product' ? 0 : 1));
+    await loadChannels();
+    const act = channels.filter((x) => x.active);
+    const goal = act.reduce((n, x) => n + x.goal, 0) || tdGoal(), done = act.reduce((n, x) => n + Math.min(x.today, x.goal), 0);
+    renderQuests().catch(() => {});
+    $('td-goals').replaceChildren(...act.map((x) => h('div', { class: 'td-gl' },
+      h('div', { class: 'td-gl-h' }, chBadge(x), h('b', { textContent: x.name }), h('span', { class: 'td-gl-n' }, h('b', { textContent: String(x.today) }), ` / ${x.goal}`)),
+      h('div', { class: 'td-bar' }, Object.assign(h('div'), { style: `width:${Math.min(100, Math.round(x.today / Math.max(1, x.goal) * 100))}%` })))));
+    // ขั้นถัดไปที่ควรทำ: โพสต์ (ถ้ายังไม่ครบเป้า) → ทำคลิปเสร็จ → ไปทำวิดีโอบน meta.ai → หาสินค้า
+    const go = $('td-next-go');
+    let next;
+    renderDue();
+    if (by.ready.length && done < goal) next = [`พร้อมโพสต์ ${by.ready.length} คลิป — ถัดไป: ${by.ready[0].title}`, '📤 โพสต์ลงเพจ', () => openPostPanel(by.ready[0].id)];
+    else if (by.text.length) next = [`มีวิดีโอจาก Meta AI รอใส่ข้อความ ${by.text.length} คลิป`, '🎞 ใส่ข้อความ + ทำคลิปเสร็จ', async () => { await finishProduct(by.text[0].id); await refresh(); }];
+    else if (by.wait.length) next = [`รอทำวิดีโอบน meta.ai ${by.wait.length} ชิ้น`, '↗ เปิด meta.ai', () => window.open('https://www.meta.ai/', '_blank', 'noopener')];
+    else next = ['คิวว่าง — หาสินค้ามาทำคลิปเพิ่ม', '🔎 หาสินค้าใน Shopee', () => $('td-kw-go').click()];
+    $('td-next-t').textContent = next[0];
+    go.hidden = false; go.textContent = next[1]; go.onclick = () => guard(go, next[2]);
+    // สายพาน 4 ขั้น
+    const col = (key, name, hint, list, btn, fn) => {
+      const b = h('button', { class: 'btn sm', type: 'button', textContent: btn, disabled: !list.length && key !== 'wait' });
+      b.addEventListener('click', () => guard(b, fn));
+      return h('div', { class: `td-col ${key}` },
+        h('div', { class: 'td-col-h' }, h('span', { class: 'dot' }), h('b', { textContent: name }), h('span', { class: 'td-n', textContent: String(list.length) })),
+        h('div', { class: 'hint', textContent: hint }),
+        h('ul', {}, ...list.slice(0, 3).map((c) => h('li', { textContent: c.title })), ...(list.length > 3 ? [h('li', { class: 'muted', textContent: `และอีก ${list.length - 3}` })] : [])),
+        b);
+    };
+    const toLib = (st) => () => { filter = st; kind = ''; for (const x of $('filter').children) x.setAttribute('aria-pressed', String(x.dataset.v === st)); for (const x of $('kindfilter').children) x.setAttribute('aria-pressed', String(x.dataset.k === '')); resetPage(); location.hash = 'library'; refresh(); };
+    $('td-pipe').replaceChildren(
+      col('wait', 'รอวิดีโอ Meta AI', 'เปิด meta.ai แผง Arn Reels วาง prompt + รูปให้ คุณกดสร้างเอง', by.wait, '↗ เปิด meta.ai', () => window.open('https://www.meta.ai/', '_blank', 'noopener')),
+      col('text', 'รอใส่ข้อความ', 'ได้วิดีโอดิบแล้ว — ใส่ข้อความไทย + แคปชัน', by.text, '🎞 ทำคลิปเสร็จ', async () => { await finishProduct(by.text[0].id); await refresh(); }),
+      col('ready', 'พร้อมโพสต์', 'ดาวน์โหลด คัดลอกแคปชันและคอมเมนต์ลิงก์', by.ready, '📤 โพสต์', () => openPostPanel(by.ready[0].id)),
+      col('posted', 'โพสต์แล้ววันนี้', 'นับรวมในเป้าวันนี้', by.posted, 'ดูในคลัง', toLib('posted')));
+  } finally { tdBusy = false; }
+}
+$('td-goal-edit').addEventListener('click', () => openChannels());
+
+
+// ---------- เควสเพจ (หน้าสถานะของ Facebook) + โพสต์รูป ----------
+const PHOTO_ICON = { news: '📰', ask: '💬', product: '🛍' };
+const PHOTO_TH = { news: 'การ์ดข่าว', ask: 'ชวนคุย', product: 'รูปสินค้า' };
+async function renderQuests() {
+  const qs = await api('GET', '/api/quests');
+  const box = $('td-quests');
+  if (!box) return;
+  if (!qs.length) {
+    box.replaceChildren(h('div', { class: 'td-label' }, 'เควสสัปดาห์นี้ของเพจ'),
+      h('div', { class: 'hint' }, 'เปิดหน้า ', h('a', { href: 'https://www.facebook.com/professional_dashboard/status', target: '_blank', rel: 'noopener' }, 'แดชบอร์ดครีเอเตอร์ → สถานะ'), ' ใน Chrome (ใช้งานในนามเพจ) แล้วส่วนเสริมจะส่งเควสมาให้เอง'));
+    return;
+  }
+  box.replaceChildren(...qs.map((q) => {
+    const age = Math.round((Date.now() - q.updated_at) / 3600_000);
+    const rows = q.items.filter((x) => x.total).map((x) => h('div', { class: `qs-row${x.complete ? ' done' : ''}` },
+      h('span', { class: 'qs-l', textContent: `${x.complete ? '✓ ' : ''}${x.label}` }),
+      h('span', { class: 'qs-n', textContent: `${x.done}/${x.total}` }),
+      h('div', { class: 'td-bar' }, Object.assign(h('div'), { style: `width:${Math.min(100, Math.round(x.done / Math.max(1, x.total) * 100))}%` }))));
+    const p = q.plan;
+    const needR = Math.max(0, p.reel - p.todayReel), needP = Math.max(0, p.photo - p.todayPhoto);
+    const mk = h('button', { class: 'btn sm primary', type: 'button', textContent: `🖼 ทำโพสต์รูปวันนี้ (${Math.max(needP, 1)})`, disabled: !needP });
+    mk.addEventListener('click', () => guard(mk, () => makePhotoMix(needP)));
+    return h('div', { class: 'qs' },
+      h('div', { class: 'td-label', textContent: `เควสสัปดาห์นี้ · ${q.channel} · ${q.week} (เหลือ ${q.days} วัน)` }),
+      ...rows,
+      h('div', { class: 'qs-plan' }, `วันนี้ควรลง: 🎬 Reels ${p.reel} (ลงแล้ว ${p.todayReel}) · 🖼 โพสต์รูป ${p.photo} (ลงแล้ว ${p.todayPhoto})`),
+      h('div', { class: 'row' }, mk, h('span', { class: 'hint', textContent: `อัปเดตจาก Facebook ${age < 1 ? 'เมื่อสักครู่' : `${age} ชม.ที่แล้ว`}` })));
+  }));
+}
+// ผสมแบบโพสต์รูป: ข่าว → ชวนคุย → สินค้า วนไป
+async function makePhotoMix(n) {
+  const order = ['news', 'ask', 'product'];
+  const want = { news: 0, ask: 0, product: 0 };
+  for (let i = 0; i < Math.max(1, n); i++) want[order[i % 3]]++;
+  let made = 0;
+  for (const st of order) if (want[st]) { try { made += await makePhotos(st, want[st]); } catch (e) { toast(`${PHOTO_TH[st]}: ${e.message}`, true); } }
+  toast(made ? `ทำโพสต์รูปแล้ว ${made} โพสต์ — กด “จัดอัตโนมัติ” ในตารางโพสต์เพื่อลงช่วงเวลา` : 'ยังทำโพสต์รูปไม่ได้', !made);
+  await refresh();
+}
+async function makePhotos(style, count) {
+  const tid = task.start(`โพสต์รูป: ${PHOTO_TH[style]}`, 0.05, style === 'news' ? 'AI กำลังหาข่าววันนี้…' : 'AI กำลังเขียนโพสต์…');
+  let n = 0;
+  try {
+    const clips = await api('POST', '/api/photo-posts', { style, count });
+    for (const [i, c] of clips.entries()) { task.set(tid, 0.4 + 0.6 * i / clips.length, `กำลังทำรูป ${i + 1}/${clips.length}`); await makePhotoFile(c); n++; }
+  } finally { task.end(tid, 500); }
+  return n;
+}
+const PHOTO_FONT = '"LINE Seed Sans TH", "LINESeedSansTH", "Leelawadee UI", "Noto Sans Thai", Tahoma, sans-serif';
+function wrapTh(ctx, text, maxW) {
+  const seg = typeof Intl !== 'undefined' && Intl.Segmenter ? [...new Intl.Segmenter('th', { granularity: 'word' }).segment(text)].map((x) => x.segment) : text.split(/(\s+)/);
+  const lines = []; let cur = '';
+  for (const w of seg) { if (ctx.measureText(cur + w).width > maxW && cur.trim()) { lines.push(cur.trim()); cur = w.trimStart(); } else cur += w; }
+  if (cur.trim()) lines.push(cur.trim());
+  return lines;
+}
+const loadImg = (src) => new Promise((resolve) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => resolve(null); im.src = src; });
+function drawCover(ctx, im, x, y, w, hh, contain = false) {
+  const r = contain ? Math.min(w / im.width, hh / im.height) : Math.max(w / im.width, hh / im.height);
+  const dw = im.width * r, dh = im.height * r;
+  ctx.drawImage(im, x + (w - dw) / 2, y + (hh - dh) / 2, dw, dh);
+}
+// วาดการ์ดโพสต์รูป 1080×1350 (4:5) → อัปโหลดรูป + หน้าปกเล็กของคลัง
+async function makePhotoFile(c) {
+  const W = 1080, H = 1350, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  let img = null;
+  try { const f = JSON.parse(c.images || '[]')[0]; if (f && f.file) img = await loadImg(`/clip-images/${f.file}`); } catch { /* ไม่มีรูป */ }
+  const logo = status.logo && status.brand?.logoOn !== false ? await loadImg(`/brand/logo.png?v=${status.logo.v}`) : null;
+  const text = (c.brief || c.title || '').trim();
+  const pill = (label, x, y, bg, fg) => { ctx.font = `800 40px ${PHOTO_FONT}`; const w = ctx.measureText(label).width + 56; ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(x, y, w, 72, 36); ctx.fill(); ctx.fillStyle = fg; ctx.textBaseline = 'middle'; ctx.fillText(label, x + 28, y + 38); return w; };
+  ctx.textBaseline = 'alphabetic';
+  if (c.badge === 'news') {
+    if (img) drawCover(ctx, img, 0, 0, W, H); else { const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#1e2a78'); g.addColorStop(1, '#c2185b'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+    const g = ctx.createLinearGradient(0, H * 0.35, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.45, 'rgba(0,0,0,.72)'); g.addColorStop(1, 'rgba(0,0,0,.92)');
+    ctx.fillStyle = g; ctx.fillRect(0, H * 0.35, W, H * 0.65);
+    ctx.font = `900 84px ${PHOTO_FONT}`;
+    const lines = wrapTh(ctx, text, W - 140).slice(0, 4);
+    let y = H - 150 - (lines.length - 1) * 104;
+    pill('ข่าววันนี้', 70, y - 150, '#e53935', '#fff');
+    ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 12;
+    ctx.font = `900 84px ${PHOTO_FONT}`;
+    for (const l of lines) { ctx.fillText(l, 70, y); y += 104; }
+    ctx.shadowBlur = 0;
+    let credit = ''; try { credit = JSON.parse(c.images || '[]')[0]?.credit || ''; } catch { /* ไม่มี */ }
+    if (credit) { ctx.font = `500 30px ${PHOTO_FONT}`; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillText(`ภาพ: ${credit}`, 70, H - 56); }
+  } else if (c.badge === 'product') {
+    ctx.fillStyle = '#fff7f0'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ffe0cc'; ctx.beginPath(); ctx.arc(W / 2, 560, 440, 0, Math.PI * 2); ctx.fill();
+    if (img) drawCover(ctx, img, 120, 140, W - 240, 840, true);
+    ctx.font = `900 76px ${PHOTO_FONT}`; ctx.fillStyle = '#222';
+    const lines = wrapTh(ctx, text, W - 140).slice(0, 2);
+    let y = 1080;
+    for (const l of lines) { ctx.fillText(l, 70, y); y += 92; }
+    pill('พิกัดในคอมเมนต์ 👇', 70, H - 130, '#ee4d2d', '#fff');
+  } else { // ask
+    const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#ffb3c7'); g.addColorStop(1, '#8c7bff'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.beginPath(); ctx.roundRect(80, 240, W - 160, 760, 48); ctx.fill();
+    ctx.font = `900 88px ${PHOTO_FONT}`; ctx.fillStyle = '#2b2350'; ctx.textAlign = 'center';
+    const lines = wrapTh(ctx, text, W - 300).slice(0, 5);
+    let y = 620 - (lines.length - 1) * 54;
+    for (const l of lines) { ctx.fillText(l, W / 2, y); y += 108; }
+    ctx.textAlign = 'left';
+    ctx.font = `800 52px ${PHOTO_FONT}`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText('💬 ตอบในคอมเมนต์เลย', W / 2, 1150); ctx.textAlign = 'left';
+  }
+  if (logo) { const s = 120; ctx.save(); ctx.beginPath(); ctx.arc(W - 70 - s / 2, 70 + s / 2, s / 2, 0, Math.PI * 2); ctx.clip(); ctx.drawImage(logo, W - 70 - s, 70, s, s); ctx.restore(); }
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.9));
+  const res = await fetch(`/api/clips/${c.id}/photo`, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: blob });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  const tc = document.createElement('canvas'); tc.width = 270; tc.height = Math.round(270 * H / W);
+  tc.getContext('2d').drawImage(cv, 0, 0, tc.width, tc.height);
+  const tb = await new Promise((r) => tc.toBlob(r, 'image/jpeg', 0.8));
+  await fetch(`/api/clips/${c.id}/thumb`, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: tb }).catch(() => {});
+  return data;
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-photo]');
+  if (!b) return;
+  const n = Number(($('ph-count') || {}).value) || 1;
+  guard(b, async () => { const k = b.dataset.photo; const made = k === 'mix' ? (await makePhotoMix(n), 0) : await makePhotos(k, n); if (made) { toast(`ทำโพสต์รูปแล้ว ${made} โพสต์`); await refresh(); } });
+});
+
+// ---------- ช่องทางโพสต์ (หน้าต่าง) ----------
+const KIND_TH = { product: 'สินค้า', quick: 'คลิปเร็ว/ข่าว', story: 'เรื่อง' };
+async function openChannels() {
+  await loadChannels();
+  renderChannels();
+  $('ch-msg').textContent = '';
+  if (!$('channels').open) $('channels').showModal();
+}
+function renderChannels() {
+  $('ch-list').replaceChildren(...channels.map((x) => {
+    const f = {
+      name: h('input', { value: x.name, maxLength: 80 }),
+      url: h('input', { value: x.url, maxLength: 300, placeholder: x.kind === 'yt' ? 'https://www.youtube.com/@ชื่อช่อง' : 'https://www.facebook.com/ชื่อเพจ' }),
+      goal: h('input', { type: 'number', min: 0, max: 50, value: x.goal }),
+      times: h('input', { value: x.times.split(',').filter(Boolean).join(', '), placeholder: 'เช่น 09:00, 12:00, 19:00' }),
+      photo_times: h('input', { value: (x.photo_times || '').split(',').filter(Boolean).join(', '), placeholder: 'เช่น 07:30, 15:00, 21:00' }),
+      tone: h('input', { value: x.tone, maxLength: 120, placeholder: 'เช่น เป็นกันเอง ชวนซื้อ' }),
+      active: h('input', { type: 'checkbox', checked: !!x.active }),
+    };
+    const kinds = Object.entries(KIND_TH).map(([k, t]) => { const cb = h('input', { type: 'checkbox', checked: x.kinds.split(',').includes(k), value: k }); return { cb, el: h('label', { class: 'check' }, cb, t) }; });
+    const save = h('button', { class: 'btn sm primary', type: 'button', textContent: 'บันทึก' });
+    save.addEventListener('click', () => guard(save, async () => {
+      await api('PATCH', `/api/channels/${x.id}`, { name: f.name.value, url: f.url.value, goal: f.goal.value, times: f.times.value, photo_times: x.kind === 'fb' ? f.photo_times.value : undefined, tone: f.tone.value, active: f.active.checked, kinds: kinds.filter((k) => k.cb.checked).map((k) => k.cb.value) });
+      await loadChannels(); renderChannels(); $('ch-msg').textContent = `บันทึก ${f.name.value} แล้ว ✓`;
+      for (const e of cards.values()) e.stamp = 0; refresh();
+    }, (e) => { $('ch-msg').textContent = e.message; }));
+    const del = h('button', { class: 'btn sm danger', type: 'button', textContent: 'ลบ' });
+    del.addEventListener('click', () => guard(del, async () => {
+      if (!(await uiConfirm(`ลบช่องทาง “${x.name}”? (ประวัติการโพสต์และตารางของช่องทางนี้จะหายด้วย)`, { title: 'ลบช่องทาง', ok: 'ลบ', danger: true }))) return;
+      await api('DELETE', `/api/channels/${x.id}`); await loadChannels(); renderChannels();
+    }, (e) => { $('ch-msg').textContent = e.message; }));
+    const fld = (label, el) => h('label', { class: 'field' }, label, el);
+    return h('section', { class: 'ch-card' },
+      h('div', { class: 'ch-card-h' }, chBadge(x), h('b', { textContent: x.name }), h('label', { class: 'check' }, f.active, 'ใช้งาน')),
+      h('div', { class: 'ch-grid' }, fld('ชื่อที่แสดง', f.name), fld(x.kind === 'yt' ? 'ลิงก์ช่อง' : 'ลิงก์เพจ', f.url), fld('เป้าต่อวัน (คลิป)', f.goal), fld('เวลาลง Reels', f.times), ...(x.kind === 'fb' ? [fld('เวลาโพสต์รูป', f.photo_times)] : []), fld('สไตล์แคปชัน (โน้ต)', f.tone)),
+      h('div', { class: 'row' }, h('span', { class: 'hint', textContent: 'ชนิดคลิปที่ลงช่องทางนี้:' }), ...kinds.map((k) => k.el)),
+      h('div', { class: 'row' }, save, del));
+  }));
+}
+const addChannel = (kind) => guard($(kind === 'yt' ? 'ch-add-yt' : 'ch-add-fb'), async () => {
+  const name = await uiPrompt(kind === 'yt' ? 'ชื่อช่อง YouTube' : 'ชื่อเพจ Facebook', { title: 'เพิ่มช่องทาง', ok: 'เพิ่ม' });
+  if (!name) return;
+  await api('POST', '/api/channels', { kind, name, goal: kind === 'yt' ? 3 : 2, kinds: kind === 'yt' ? ['product', 'quick', 'story'] : ['quick'] });
+  await loadChannels(); renderChannels();
+}, (e) => { $('ch-msg').textContent = e.message; });
+$('ch-add-fb').addEventListener('click', () => addChannel('fb'));
+$('ch-add-yt').addEventListener('click', () => addChannel('yt'));
+$('ch-x').addEventListener('click', () => $('channels').close());
+$('ch-close').addEventListener('click', () => $('channels').close());
+$('channels').addEventListener('close', () => { if (view === 'today') renderToday(); if (view === 'schedule') renderSchedule(); });
+
+// ---------- ตารางโพสต์ ----------
+const dayStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+let scDay = dayStr(new Date());
+const SLOT_TH = { wait: 'รอถึงเวลา', set: 'ตั้งเวลาในเพจ/Studio แล้ว', done: 'โพสต์แล้ว', skip: 'ข้าม' };
+async function renderSchedule() {
+  const days = [...Array(7)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() + i); return d; });
+  $('sc-days').replaceChildren(...days.map((d, i) => {
+    const k = dayStr(d);
+    const b = h('button', { type: 'button', 'aria-pressed': String(k === scDay), textContent: i ? d.toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric' }) : `วันนี้ ${d.getDate()}` });
+    b.addEventListener('click', () => { scDay = k; renderSchedule(); });
+    return b;
+  }));
+  const [sd, ready] = await Promise.all([api('GET', `/api/schedule?day=${scDay}`), api('GET', '/api/clips?sort=old&limit=200')]);
+  const chs = sd.channels;
+  $('sc-add-ch').replaceChildren(...chs.map((x) => h('option', { value: String(x.id), textContent: x.name })));
+  const times = [...new Set(sd.slots.map((x) => x.time))].sort();
+  const now = new Date(), nowT = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const isToday = scDay === dayStr(now);
+  const pool = ready.items.filter((c) => (c.kind === 'photo' ? c.photo_file : c.video_file) && (c.status === 'ready' || c.status === 'posted'));
+  const cell = (slot, ch) => {
+    if (!slot) return h('td', { class: 'sc-none' }, h('span', { class: 'muted', textContent: '—' }));
+    const dueNow = isToday && slot.time <= nowT && slot.state === 'wait';
+    const isPh = slot.kind === 'photo';
+    const opts = pool.filter((c) => (c.kind === 'photo') === isPh && chFits(ch, c) && (!postedOn(c, ch.id) || c.id === slot.clip_id));
+    const pick = h('select', { 'aria-label': `คลิปเวลา ${slot.time} ${ch.name}` }, h('option', { value: '', textContent: opts.length ? (isPh ? '＋ เลือกโพสต์รูป' : '＋ เลือกคลิป') : (isPh ? '(ยังไม่มีโพสต์รูปพร้อม)' : '(ยังไม่มีคลิปพร้อมโพสต์)') }), ...opts.map((c) => h('option', { value: String(c.id), textContent: `${c.kind === 'photo' ? PHOTO_ICON[c.badge] || '🖼' : c.kind === 'product' ? '🛍' : '🎬'} ${c.title}`, selected: c.id === slot.clip_id })));
+    pick.addEventListener('change', () => api('PATCH', `/api/schedule/${slot.id}`, { clip_id: pick.value || null }).then(renderSchedule).catch((e) => toast(e.message, true)));
+    const kids = [h('span', { class: 'sc-kind', textContent: isPh ? '🖼 โพสต์รูป' : '🎬 Reels' }), pick];
+    if (slot.clip_id) {
+      kids.push(h('span', { class: `sc-st ${dueNow ? 'due' : slot.state}`, textContent: dueNow ? 'ถึงเวลาแล้ว — โพสต์เลย' : SLOT_TH[slot.state] }));
+      const row = h('div', { class: 'row' });
+      if (slot.state !== 'done') {
+        const go = h('button', { class: `btn sm${dueNow ? ' primary' : ''}`, type: 'button', textContent: '📤 โพสต์' });
+        go.addEventListener('click', () => openPostPanel(slot.clip_id, ch.id));
+        const set = h('button', { class: 'btn sm ghost', type: 'button', textContent: slot.state === 'set' ? '↩ ยังไม่ได้ตั้ง' : 'ตั้งเวลาแล้ว', title: 'ตั้งเวลาโพสต์ใน Meta Business Suite / YouTube Studio เองแล้ว' });
+        set.addEventListener('click', () => api('PATCH', `/api/schedule/${slot.id}`, { state: slot.state === 'set' ? 'wait' : 'set' }).then(renderSchedule));
+        row.append(go, set);
+      }
+      kids.push(row);
+    }
+    const rm = h('button', { class: 'linkbtn sc-rm', type: 'button', textContent: 'ลบช่องนี้', title: 'ลบเวลานี้ออกจากวันนี้' });
+    rm.addEventListener('click', () => api('DELETE', `/api/schedule/${slot.id}`).then(renderSchedule));
+    kids.push(rm);
+    return h('td', { class: `sc-cell ${slot.state}${dueNow ? ' due' : ''}` }, ...kids);
+  };
+  $('sc-table').replaceChildren(
+    h('thead', {}, h('tr', {}, h('th', { textContent: 'เวลา' }), ...chs.map((x) => h('th', {}, chBadge(x), ` ${x.name}`)))),
+    h('tbody', {}, ...(times.length ? times.map((t) => h('tr', { class: sd.slots.some((s) => s.time === t && s.kind === 'photo') ? 'sc-photo' : '' }, h('th', { textContent: t }), ...chs.map((x) => cell(sd.slots.find((s) => s.time === t && s.channel_id === x.id), x))))
+      : [h('tr', {}, h('td', { colSpan: chs.length + 1, class: 'muted', textContent: 'ยังไม่มีเวลาโพสต์ — กด “ช่องทาง / เวลาประจำ” เพื่อตั้งเวลา หรือเพิ่มช่องด้านล่าง' }))])));
+  renderDue();
+}
+$('sc-fill').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  const r = await api('POST', '/api/schedule/autofill', { day: scDay });
+  toast(r.filled ? `จัดคลิปลง ${r.filled} ช่องแล้ว` : 'ไม่มีคลิปพร้อมโพสต์ที่ใส่ได้ (หรือช่องเต็มแล้ว)');
+  await renderSchedule();
+}));
+$('sc-channels').addEventListener('click', () => openChannels());
+$('sc-add').addEventListener('click', (e) => guard(e.currentTarget, async () => {
+  await api('POST', '/api/schedule', { channel_id: Number($('sc-add-ch').value), day: scDay, time: $('sc-add-t').value });
+  await renderSchedule();
+}));
+
+// แจ้งเตือนเมื่อถึงเวลาโพสต์ (เช็กทุก 1 นาทีขณะเปิดหน้าเว็บ)
+let dueList = [];
+const dueSeen = new Set();
+async function checkDue() {
+  try { dueList = await api('GET', '/api/schedule/due'); } catch { return; }
+  renderDue();
+  for (const d of dueList) {
+    const k = `${d.id}`;
+    if (dueSeen.has(k)) continue;
+    dueSeen.add(k);
+    toast(`ถึงเวลาโพสต์ ${d.time} · ${d.channel_name}${d.clip_title ? ` — ${d.clip_title}` : ' (ยังไม่ได้เลือกคลิป)'}`);
+  }
+}
+function renderDue() {
+  $('tab-due').hidden = !dueList.length;
+  for (const id of ['sc-due', 'td-due']) {
+    const box = $(id);
+    box.hidden = !dueList.length;
+    box.replaceChildren(...dueList.slice(0, 3).map((d) => {
+      const b = h('button', { class: 'btn sm primary', type: 'button', textContent: d.clip_id ? 'เปิดแผงโพสต์' : 'เลือกคลิป' });
+      b.addEventListener('click', () => { if (d.clip_id) openPostPanel(d.clip_id, d.channel_id); else location.hash = 'schedule'; });
+      return h('div', { class: 'due-row' }, h('span', { class: 'dot' }), h('span', {}, h('b', { textContent: `ถึงเวลาแล้ว ${d.time} · ${d.channel_name}` }), d.clip_title ? ` — ${d.clip_title}` : ' — ยังไม่ได้เลือกคลิป'), b);
+    }));
+  }
+}
+setInterval(checkDue, 60_000);
+$('td-kw').value = pfRecentList()[0] || 'ของใช้ในบ้าน';
+$('td-kw-go').addEventListener('click', () => { $('pf-kw').value = $('td-kw').value.trim() || 'ของใช้ในบ้าน'; $('pf-go').click(); toast('เปิด Shopee Affiliate แล้ว — ค้นในแผง Arn Reels มุมขวาล่าง'); });
+$('td-kw').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('td-kw-go').click(); } });
+for (const b of document.querySelectorAll('[data-quick]')) b.addEventListener('click', () => { location.hash = 'create'; const m = $('mode').querySelector(`[data-m="${b.dataset.quick}"]`); if (m) m.click(); });
+
+loadStatus().then(loadChannels).then(refresh).then(checkDue).then(promptLoginOnce).catch((e) => say(e.message));

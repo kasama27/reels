@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ซีรีส์รายวัน — Arn Reels</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .sr-wrap { max-width: 960px; margin: 0 auto; padding: 20px 16px 60px; }
+  .sr-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 16px; }
+  .sr-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .sr-head h2 { margin: 0; font-size: 18px; flex: 1; min-width: 160px; }
+  .sr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 12px 0; }
+  .sr-jobs { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .sr-jobs th, .sr-jobs td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .sr-jobs th { color: var(--muted); font-weight: 600; }
+  .st-pill { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; border: 1px solid var(--line-2); }
+  .st-pill.ok { border-color: #2f7a4a; color: #7fd69c; }
+  .st-pill.bad { border-color: #7a2a2a; color: var(--bad, #ff7a7a); }
+  .st-pill.run { border-color: var(--accent); color: var(--accent); }
+  .sr-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .sr-rule { font-size: 12px; color: var(--muted); border: 1px dashed var(--line-2); border-radius: 10px; padding: 8px 12px; margin-bottom: 16px; }
+  .sr-err { color: var(--bad, #ff7a7a); font-size: 12px; margin-top: 2px; word-break: break-word; }
+  .sr-off { opacity: .75; }
+</style>
+</head>
+<body>
+<script>if (/[?&]embed=1/.test(location.search)) document.body.classList.add('embed');</script>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">📺</span>
+    <div><b>ซีรีส์รายวัน</b><small>ตั้งค่าซีรีส์ · ดูสถานะแต่ละตอน</small></div>
+  </div>
+  <div class="topbar-right"><a class="btn ghost" href="/">← Arn Reels</a></div>
+</header>
+<main class="sr-wrap">
+  <div class="sr-rule">
+    กติกาของระบบ: ซีรีส์ใหม่ปิดอยู่เสมอ · ป้ายเนื้อหา AI ต้องติ๊กและยืนยันก่อนโพสต์ทุกครั้ง (ปิดไม่ได้) · ไม่เกินจำนวนตอนต่อวันที่ตั้งไว้ · หน้านี้ดูและตั้งค่าเท่านั้น การโพสต์จริงยังไม่เปิดใช้งาน
+  </div>
+  <div class="sr-card">
+    <div class="sr-head"><h2>เพิ่มซีรีส์ใหม่</h2></div>
+    <div class="sr-grid" id="new-form"></div>
+    <button class="btn primary" id="new-go" type="button">สร้างซีรีส์ (ปิดไว้ก่อน)</button>
+  </div>
+  <div id="list"></div>
+</main>
+<div id="toast" class="toast" hidden></div>
+<script src="/series.js"></script>
+</body>
+</html>

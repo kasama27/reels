@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="th"><meta charset="utf-8"><title>ทดสอบเทมเพลต B</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{margin:0;background:#12151f;color:#e8eaf2;font:14px "Leelawadee UI",Tahoma,sans-serif;display:flex;gap:16px;padding:12px;height:100vh;box-sizing:border-box}
+  canvas{height:100%;aspect-ratio:9/16;background:#000;border-radius:8px}
+  .side{display:flex;flex-direction:column;gap:8px;min-width:260px}
+  input[type=range]{width:100%}
+  button{padding:6px 12px;border-radius:6px;border:0;background:#2b3556;color:#fff;cursor:pointer}
+  pre{margin:0;color:#9aa3c0;white-space:pre-wrap}
+</style>
+<canvas id="c" width="1080" height="1920"></canvas>
+<div class="side">
+  <b>ทดสอบเทมเพลต B (ระยะ 1)</b>
+  <div><button id="play">▶ เล่น</button> <span id="tl"></span></div>
+  <input id="sl" type="range" min="0" max="100" step="0.05" value="0">
+  <pre id="info"></pre>
+  <div style="color:#9aa3c0">ภาพพื้นเป็นของจำลอง (เส้นความเร็ว + วงกลม) — ทดสอบเฉพาะชั้นข้อความ/มิเตอร์/การ์ด<br>เปิดแบบ ?t=12.5 เพื่อค้างที่เวลานั้น</div>
+</div>
+<script src="/tplb.js"></script>
+<script>
+const T = window.ReelTplB, cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const theme = { colors: ['#0b1020', '#1b2550'], accent: '#ffd36b' };
+const opts = { epLabel: 'EP.25 · ซีรีส์ตัวอย่าง', meterLabel: 'ระดับสปอยล์', theme,
+  card: { word: 'สปอยล์', title: 'ซีรีส์ตัวอย่าง', ep: 'EP.25', sub: 'ตอนจบซีซัน 1', line: 'ตอนต่อไป: เรื่องใหญ่กำลังจะเริ่มขึ้น', credit: 'ภาพประกอบสร้างด้วย AI · เรียบเรียงเนื้อเรื่องด้วยถ้อยคำของเราเอง' } };
+// เส้นเวลาตัวอย่าง (วินาที)
+const TL = [
+  { kind: 'shot', dur: 4, bg: 'burst', shot: { narration: 'ถ้าต้องเลือกระหว่างแม่ผู้ให้กำเนิดกับหุ่นยนต์ที่เลี้ยงมา คุณจะเลือกใคร?', caption: '{{เลือกหุ่นยนต์}}?', meter: 1 } },
+  { kind: 'cover', dur: 3 },
+  { kind: 'shot', dur: 4, bg: 'burst', shot: { narration: 'ตัวเอกถูกจับตัวไปกลางดึก', caption: 'ถูกพาไปให้{{ลูกสาว}}ตัดสินเอง', sfx: 'ตึง!!', meter: 1, meterPrev: 1 } },
+  { kind: 'shot', dur: 4, bg: 'plate', shot: { narration: 'แต่ความจริงเรื่องแม่ซ่อนอยู่ในหุ่นยนต์ตัวนั้น', caption: 'แม่ที่แท้จริง = {{วาลคิรี}}', meter: 3, meterPrev: 2 } },
+  { kind: 'shot', dur: 4, bg: 'burst', shot: { narration: 'เมื่อทุกอย่างพังทลายลงต่อหน้าต่อตา ทุกคนต้องตัดสินใจครั้งสำคัญที่สุดในชีวิต แล้วไม่มีใครรู้ว่าจะจบแบบไหน', caption: 'ผลลัพธ์คือ {{สร้างวาลคิรีใหม่}} ไหม? หรือจะ{{ยอมแพ้}}', sfx: 'โครม!', meter: 5, meterPrev: 4 } },
+  { kind: 'end', dur: 4 },
+];
+let acc = 0; TL.forEach((s) => { s.start = acc; acc += s.dur; });
+const TOTAL = acc, sl = document.getElementById('sl'); sl.max = TOTAL;
+
+function art(bg, lt, i) {
+  const W = cv.width, H = cv.height;
+  ctx.fillStyle = i % 2 ? '#14182b' : '#0b1020'; ctx.fillRect(0, 0, W, H);
+  T.drawSpeedLines(ctx, lt, { color: '#2a3258', alpha: 1 });
+  ctx.fillStyle = '#1b2550'; ctx.beginPath(); ctx.arc(W / 2, H * 0.52 + Math.sin(lt * 2) * 10, 330, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffd36b'; ctx.beginPath(); ctx.arc(W / 2 - 110, H * 0.5, 36, 0, Math.PI * 2); ctx.arc(W / 2 + 110, H * 0.5, 36, 0, Math.PI * 2); ctx.fill();
+}
+function renderAt(t) {
+  t = Math.max(0, Math.min(TOTAL - 0.001, t));
+  const idx = TL.findIndex((s) => t < s.start + s.dur), s = TL[idx], lt = t - s.start;
+  if (s.kind === 'cover' || s.kind === 'end') T.drawCard(ctx, s.kind, lt, s.dur, opts);
+  else {
+    const pal = T.palette(theme), W = cv.width, H = cv.height;
+    if (s.bg === 'plate') {
+      T.drawPlateBackdrop(ctx, pal);
+      const r = T.plateRect(W, H);
+      T.plateShadow(ctx, r, pal);
+      ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+      ctx.translate(r.x, r.y - 330); art('plate', lt, idx); ctx.restore();
+      T.drawPlateFrame(ctx, r, pal);
+    } else art(s.bg, lt, idx);
+    T.drawShotOverlay(ctx, { ...s.shot, index: idx }, lt, s.dur, { ...opts, narrOnTop: s.bg !== 'plate' || true });
+  }
+  document.getElementById('tl').textContent = `${t.toFixed(2)} / ${TOTAL}s · ${s.kind}${s.bg ? ' · ' + s.bg : ''}`;
+  sl.value = t; window.curT = t;
+}
+window.renderAt = renderAt; window.TOTAL = TOTAL;
+let playing = false, t0 = 0;
+function loop(now) { if (!playing) return; renderAt(((now - t0) / 1000) % TOTAL); requestAnimationFrame(loop); }
+document.getElementById('play').onclick = (e) => { playing = !playing; e.target.textContent = playing ? '⏸ หยุด' : '▶ เล่น'; if (playing) { t0 = performance.now() - sl.value * 1000; requestAnimationFrame(loop); } };
+sl.oninput = () => { playing = false; document.getElementById('play').textContent = '▶ เล่น'; renderAt(+sl.value); };
+const q = new URLSearchParams(location.search).get('t');
+renderAt(q ? +q : 0);
+</script>
+</html>
